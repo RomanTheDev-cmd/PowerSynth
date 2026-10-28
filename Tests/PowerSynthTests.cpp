@@ -1,0 +1,397 @@
+// PowerSynth engine and preset tests (headless). Run from the project folder.
+//   powersynth_tests               all checks
+//   powersynth_tests --dump-presets   name|category|id=value ... per factory preset
+//   powersynth_tests --calibrate      the MASTER that puts each factory preset's true peak at -1 dBTP (standard phrase)
+//   powersynth_tests --serve          render server for Tools/fit_synth.py (see servePhrase)
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <iostream>
+#include <sstream>
+#include "DSP/SynthEngine.h"
+#include "Presets.h"
+
+using namespace ps;
+
+namespace
+{
+int checks = 0, failures = 0;
+void expect (bool ok, const juce::String& what)
+{
+    ++checks;
+    if (! ok) { ++failures; std::cout << "FAIL: " << what << "\n"; }
+}
+double db (double g) { return 20.0 * std::log10 (std::max (g, 1.0e-12)); }
+
+struct Note { double on, off; int note; float vel = 0.9f; };
+
+juce::AudioBuffer<float> render (SynthParams p, const std::vector<Note>& notes, double seconds, double sr = 48000.0, int block = 512,
+                                 const std::vector<std::pair<double, int>>& bends = {})
+{
+    dsp::SynthEngine e;
+    e.prepare (sr, block, p);
+    const int total = (int) (seconds * sr);
+    juce::AudioBuffer<float> out (2, total);
+    out.clear();
+    for (int pos = 0; pos < total; pos += block)
+    {
+        const int n = std::min (block, total - pos);
+        juce::MidiBuffer m;
+        for (const auto& nt : notes)
+        {
+            const int on = (int) (nt.on * sr), off = (int) (nt.off * sr);
+            if (on >= pos && on < pos + n) m.addEvent (juce::MidiMessage::noteOn (1, nt.note, nt.vel), on - pos);
+            if (off >= pos && off < pos + n) m.addEvent (juce::MidiMessage::noteOff (1, nt.note), off - pos);
+        }
+        for (const auto& [t, v] : bends)
+            if ((int) (t * sr) >= pos && (int) (t * sr) < pos + n) m.addEvent (juce::MidiMessage::pitchWheel (1, v), (int) (t * sr) - pos);
+        e.process (out.getWritePointer (0, pos), out.getWritePointer (1, pos), n, m, p);
+    }
+    return out;
+}
+
+double peak (const juce::AudioBuffer<float>& a, int from = 0, int to = -1)
+{
+    if (to < 0) to = a.getNumSamples();
+    return std::max (a.getMagnitude (0, from, to - from), a.getMagnitude (1, from, to - from));
+}
+// True peak: the largest of the samples and of the 3 points between each pair of samples (4x windowed-sinc,
+// Blackman, 64 taps), evaluated around the loud samples - the measure of PowerKick. The factory level is set on it.
+double truePeak (const float* x, int n)
+{
+    static const auto taps = []
+    {
+        std::array<std::array<double, 64>, 3> t {};
+        for (int f = 1; f <= 3; ++f)
+            for (int k = 0; k < 64; ++k)
+            {
+                const double d = (k - 31) - f / 4.0, a = juce::MathConstants<double>::pi * d;
+                const double w = 0.42 + 0.5 * std::cos (a / 32.0) + 0.08 * std::cos (2.0 * a / 32.0);
+                t[(size_t) f - 1][(size_t) k] = (d == 0.0 ? 1.0 : std::sin (a) / a) * w;
+            }
+        return t;
+    }();
+    double mx = 0.0;
+    for (int i = 0; i < n; ++i) mx = std::max (mx, (double) std::abs (x[i]));
+    double best = mx;
+    for (int i = 31; i < n - 33; ++i)
+        if (std::abs (x[i]) >= 0.5 * mx || std::abs (x[i + 1]) >= 0.5 * mx)
+            for (const auto& h : taps)
+            {
+                double s = 0.0;
+                for (int k = 0; k < 64; ++k) s += x[i - 31 + k] * h[(size_t) k];
+                best = std::max (best, std::abs (s));
+            }
+    return best;
+}
+double truePeak (const juce::AudioBuffer<float>& a)
+{
+    return std::max (truePeak (a.getReadPointer (0), a.getNumSamples()), truePeak (a.getReadPointer (1), a.getNumSamples()));
+}
+double rms (const juce::AudioBuffer<float>& a, int from = 0, int to = -1)
+{
+    if (to < 0) to = a.getNumSamples();
+    return std::sqrt (0.5 * (std::pow (a.getRMSLevel (0, from, to - from), 2.0) + std::pow (a.getRMSLevel (1, from, to - from), 2.0)));
+}
+bool finite (const juce::AudioBuffer<float>& a)
+{
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < a.getNumSamples(); ++i)
+            if (! std::isfinite (a.getSample (c, i))) return false;
+    return true;
+}
+double maxStep (const juce::AudioBuffer<float>& a)
+{
+    double m = 0.0;
+    for (int c = 0; c < 2; ++c)
+        for (int i = 1; i < a.getNumSamples(); ++i)
+            m = std::max (m, (double) std::abs (a.getSample (c, i) - a.getSample (c, i - 1)));
+    return m;
+}
+
+// Largest second difference: tiny for low sines, about the amplitude of a voice for a hard cut (a click).
+double maxCurve (const juce::AudioBuffer<float>& a)
+{
+    double m = 0.0;
+    for (int c = 0; c < 2; ++c)
+        for (int i = 2; i < a.getNumSamples(); ++i)
+            m = std::max (m, (double) std::abs (a.getSample (c, i) - 2.0f * a.getSample (c, i - 1) + a.getSample (c, i - 2)));
+    return m;
+}
+
+// The phrases presets are judged and levelled on: a chord for pads, atmospheres and stabs, a line for the rest.
+bool chordCategory (const juce::String& c) { return c == "Pads" || c == "Atmospheres" || c == "Stabs"; }
+std::vector<Note> phraseFor (const juce::String& category)
+{
+    if (category == "Stabs")
+    {
+        std::vector<Note> n;
+        for (int k = 0; k < 6; ++k)
+            for (int note : { 48, 51, 55 })
+                n.push_back ({ 0.2 + k * 0.32, 0.2 + k * 0.32 + 0.12, note });
+        return n;
+    }
+    if (chordCategory (category))
+        return { { 0.0, 2.5, 48 }, { 0.0, 2.5, 51 }, { 0.0, 2.5, 55 }, { 0.0, 2.5, 60 } };
+    std::vector<Note> n;
+    const int line[] = { 48, 48, 60, 51, 48, 55, 53, 51, 48, 48, 60, 51, 58, 55, 53, 51 };
+    const double step = 60.0 / 140.0 / 4.0;
+    for (int k = 0; k < 16; ++k) n.push_back ({ k * step, k * step + step * 0.8, line[k] });
+    return n;
+}
+
+// Phrases of the render server, from the root note: 0 lead line (16ths, gate 80 %), 1 held chord, 2 one stab chord
+// (150 ms), 3 arpeggio (16ths, gate 50 %), 4 one held note, 5 one short note (150 ms). Notes stop 1 s before the end.
+std::vector<Note> servePhrase (int pattern, int root, double bpm, double len)
+{
+    std::vector<Note> n;
+    const double step = 60.0 / bpm / 4.0, end = std::max (0.3, len - 1.0);
+    auto line = [&] (std::initializer_list<int> iv, double gate)
+    {
+        const std::vector<int> v (iv);
+        for (int k = 0; k * step < end; ++k)
+            n.push_back ({ k * step, k * step + step * gate, root + v[(size_t) k % v.size()] });
+    };
+    switch (pattern)
+    {
+        case 0: line ({ 0, 0, 12, 3, 0, 7, 5, 3, 0, 0, 12, 3, 10, 7, 5, 3 }, 0.8); break;
+        case 1: for (int iv : { 0, 3, 7, 12 }) n.push_back ({ 0.0, end, root + iv }); break;
+        case 2: for (int iv : { 0, 7, 12 }) n.push_back ({ 0.0, 0.15, root + iv }); break;
+        case 3: line ({ 0, 3, 7, 12, 15, 12, 7, 3 }, 0.5); break;
+        case 4: n.push_back ({ 0.0, end, root }); break;
+        default: n.push_back ({ 0.0, 0.15, root }); break;
+    }
+    return n;
+}
+
+//==============================================================================
+void testFactoryPresets()
+{
+    const auto& f = factoryPresets();
+    expect (f.size() >= 20, "at least 20 factory presets (" + juce::String ((int) f.size()) + ")");
+    std::set<juce::String> names;
+    for (const auto& pr : f)
+    {
+        expect (names.insert (pr.name).second, "unique preset name: " + pr.name);
+        const auto p = paramsFromSnapshot (pr.values);
+        const auto a = render (p, phraseFor (pr.category), 3.5);
+        const double pk = peak (a);
+        expect (finite (a), pr.name + ": finite");
+        expect (pk <= 1.0, pr.name + ": peak <= 0 dBFS (" + juce::String (db (pk), 2) + ")");
+        expect (pk > 0.05, pr.name + ": audible (" + juce::String (db (pk), 1) + " dB)");
+        const double tp = db (truePeak (a));
+        expect (tp > -1.6 && tp <= -0.95, pr.name + ": library level, true peak -1 dBTP on the standard phrase (" + juce::String (tp, 2) + " dBTP)");
+        double mean = 0.0;
+        for (int i = 0; i < a.getNumSamples(); ++i) mean += a.getSample (0, i);
+        expect (std::abs (mean / a.getNumSamples()) < 5.0e-3, pr.name + ": no DC offset (" + juce::String (mean / a.getNumSamples(), 5) + ")");
+        // Silence after the notes and the effects tails (long pad releases + reverb/delay: within 14 s), no stuck notes.
+        const auto t = render (p, { { 0.0, 0.5, 48 } }, 14.5);
+        expect (peak (t, (int) (14.0 * 48000)) < 1.0e-3, pr.name + ": decays to silence (" + juce::String (db (peak (t, (int) (14.0 * 48000))), 1) + " dB at 14 s)");
+    }
+}
+
+void testPolyphonyAndStealing()
+{
+    SynthParams p;
+    p.attackMs = 0.5f; p.releaseMs = 2000.0f; p.reverbMix = 0.0f; p.chorus = 0.0f;
+    // Sines through an open filter: a hard cut of a stolen voice would be a step far above the sines' own slope.
+    p.oscAShape = 0.0f; p.unison = 1; p.oscBLevel = 0.0f; p.drive = 0.0f; p.cutoffHz = 18000.0f; p.fltEnv = 0.0f;
+    dsp::SynthEngine e;
+    e.prepare (48000.0, 512, p);
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer m;
+    for (int k = 0; k < 8; ++k) m.addEvent (juce::MidiMessage::noteOn (1, 48 + k, 0.8f), k * 10);
+    buf.clear();
+    e.process (buf.getWritePointer (0), buf.getWritePointer (1), 512, m, p);
+    expect (e.activeVoiceCount() == 8, "8 notes, 8 voices (" + juce::String (e.activeVoiceCount()) + ")");
+    std::vector<Note> notes;
+    for (int k = 0; k < 12; ++k) notes.push_back ({ 0.05 * k, 3.0, 48 + k });
+    const auto a = render (p, notes, 1.5);
+    const auto ref = render (p, { notes.begin(), notes.begin() + 8 }, 1.5); // the same voices without stealing
+    expect (finite (a) && maxCurve (a) < 1.5 * maxCurve (ref), "stealing voices for notes 9-12 does not click (largest curve "
+            + juce::String (maxCurve (a), 4) + ", without stealing " + juce::String (maxCurve (ref), 4) + ")");
+}
+
+void testMonoAndLegato()
+{
+    SynthParams p;
+    p.unison = 1; p.oscBLevel = 0.0f; p.oscAShape = 0.0f; p.cutoffHz = 18000.0f; p.fltEnv = 0.0f; p.chorus = 0.0f; p.reverbMix = 0.0f;
+    p.attackMs = 0.5f; p.sustain = 1.0f; p.width = 0.0f; p.drive = 0.0f;
+    p.voiceMode = VoiceMode::legato; p.glideMs = 80.0f;
+    const auto a = render (p, { { 0.0, 0.6, 57 }, { 0.4, 1.2, 69 } }, 1.3);
+    // A3 -> A4: the second note slides (no new attack): the level does not dip at 0.4 s.
+    const double before = rms (a, (int) (0.30 * 48000), (int) (0.39 * 48000)), at = rms (a, (int) (0.40 * 48000), (int) (0.42 * 48000));
+    expect (at > 0.7 * before, "LEGATO: an overlapping note continues the voice (" + juce::String (db (at / before), 1) + " dB)");
+    p.voiceMode = VoiceMode::mono;
+    const auto b = render (p, { { 0.0, 0.6, 57 }, { 0.4, 1.2, 69 } }, 1.3);
+    expect (finite (b) && maxStep (b) < 0.35, "MONO: a new note restarts the envelope without a click");
+}
+
+void testBlockSizesAndRates()
+{
+    const auto& f = factoryPresets();
+    for (int i : { 0, 4, 8, 11 })
+    {
+        const auto p = paramsFromSnapshot (f[(size_t) i].values);
+        const auto ph = phraseFor (f[(size_t) i].category);
+        const auto a = render (p, ph, 2.0, 48000.0, 512), b = render (p, ph, 2.0, 48000.0, 64);
+        double d = 0.0, r = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (int k = 0; k < a.getNumSamples(); ++k) { d += std::pow ((double) a.getSample (c, k) - b.getSample (c, k), 2.0); r += std::pow ((double) a.getSample (c, k), 2.0); }
+        expect (10.0 * std::log10 ((d + 1.0e-30) / (r + 1.0e-30)) < -90.0, f[(size_t) i].name + ": the same sound with 64- and 512-sample blocks ("
+                + juce::String (10.0 * std::log10 ((d + 1.0e-30) / (r + 1.0e-30)), 1) + " dB)");
+        const double l48 = db (rms (a));
+        for (double sr : { 44100.0, 96000.0 })
+        {
+            const auto c = render (p, ph, 2.0, sr, 512);
+            expect (finite (c) && std::abs (db (rms (c)) - l48) < 1.5, f[(size_t) i].name + ": level at " + juce::String ((int) sr)
+                    + " Hz within 1.5 dB of 48 kHz (" + juce::String (db (rms (c)) - l48, 2) + ")");
+        }
+    }
+}
+
+double pitchHz (const juce::AudioBuffer<float>& a, double t0, double t1)
+{
+    std::vector<double> z;
+    for (int i = (int) (t0 * 48000) + 1; i < (int) (t1 * 48000); ++i)
+    {
+        const double x0 = a.getSample (0, i - 1) + a.getSample (1, i - 1), x1 = a.getSample (0, i) + a.getSample (1, i);
+        if (x0 < 0.0 && x1 >= 0.0) z.push_back (i - 1 + x0 / (x0 - x1));
+    }
+    return z.size() < 3 ? 0.0 : 48000.0 * (double) (z.size() - 1) / (z.back() - z.front());
+}
+
+void testTuningBendAndLfo()
+{
+    SynthParams p;
+    p.unison = 1; p.oscBLevel = 0.0f; p.oscAShape = 0.0f; p.cutoffHz = 18000.0f; p.fltEnv = 0.0f; p.chorus = 0.0f; p.reverbMix = 0.0f;
+    p.sustain = 1.0f; p.width = 0.0f; p.drive = 0.0f; p.resonance = 0.0f;
+    const auto a = render (p, { { 0.0, 1.0, 69 } }, 1.0);
+    const double c = 1200.0 * std::log2 (pitchHz (a, 0.2, 0.9) / 440.0);
+    expect (std::abs (c) < 1.0, "A4 plays 440 Hz (" + juce::String (c, 2) + " cents)");
+    const auto b = render (p, { { 0.0, 1.0, 69 } }, 1.0, 48000.0, 512, { { 0.0, 16383 } });
+    const double cb = 1200.0 * std::log2 (pitchHz (b, 0.2, 0.9) / 440.0);
+    expect (std::abs (cb - 200.0) < 3.0, "pitch bend up: +2 semitones (" + juce::String (cb, 1) + " cents)");
+    // LFO on the amplitude at 1/4 and 120 BPM: a 0.5 s period.
+    p.lfoTarget = LfoTarget::amp; p.lfoAmount = 1.0f; p.lfoSync = true; p.lfoDiv = 2; p.bpm = 120.0; p.lfoShape = LfoShape::sine;
+    const auto l = render (p, { { 0.0, 3.0, 57 } }, 3.0);
+    std::vector<double> env;
+    for (int k = 0; k < 120; ++k) env.push_back (rms (l, k * 1200, (k + 1) * 1200));
+    int best = 0; double bestC = -1.0e9;
+    for (int lag = 10; lag < 40; ++lag)
+    {
+        double cc = 0.0;
+        for (int k = 0; k + lag < (int) env.size(); ++k) cc += env[(size_t) k] * env[(size_t) (k + lag)];
+        if (cc > bestC) { bestC = cc; best = lag; }
+    }
+    expect (best >= 19 && best <= 21, "LFO 1/4 at 120 BPM: period 0.5 s (" + juce::String (best * 0.025, 3) + " s)");
+}
+
+void testAnalogue()
+{
+    auto p = paramsFromSnapshot (factoryPresets()[0].values);
+    auto a = p; a.analog = true;
+    const auto ph = phraseFor ("Leads");
+    const auto d = render (p, ph, 2.0), x = render (a, ph, 2.0), x2 = render (a, ph, 2.0);
+    bool same = true;
+    for (int c = 0; c < 2; ++c) for (int i = 0; i < x.getNumSamples(); ++i) same = same && x.getSample (c, i) == x2.getSample (c, i);
+    expect (same, "ANALOGUE is repeatable (a bounce is the same every time)");
+    const double lvl = db (rms (x)) - db (rms (d));
+    expect (std::abs (lvl) < 2.0, "ANALOGUE keeps the level within 2 dB (" + juce::String (lvl, 2) + ")");
+    double diff = 0.0, ref = 0.0;
+    for (int c = 0; c < 2; ++c) for (int i = 0; i < d.getNumSamples(); ++i) { diff += std::pow ((double) x.getSample (c, i) - d.getSample (c, i), 2.0); ref += std::pow ((double) d.getSample (c, i), 2.0); }
+    expect (10.0 * std::log10 (diff / ref) > -25.0, "ANALOGUE changes the sound (" + juce::String (10.0 * std::log10 (diff / ref), 1) + " dB)");
+}
+
+void testCpu()
+{
+    SynthParams p;
+    p.unison = 7; p.drive = 0.6f; p.chorus = 0.5f; p.delayMix = 0.3f; p.reverbMix = 0.4f; p.oversampleIndex = 2; p.analog = true;
+    std::vector<Note> chord;
+    for (int k = 0; k < 8; ++k) chord.push_back ({ 0.0, 4.0, 48 + 2 * k });
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto a = render (p, chord, 4.0, 48000.0, 64);
+    const double sec = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    std::cout << "  CPU: 8 voices x 7 unison, 8x drive, all effects, ANALOGUE: " << juce::String (100.0 * sec / 4.0, 1) << " % of real time\n";
+    expect (finite (a) && sec / 4.0 < 0.5, "the heaviest setting runs at least twice faster than real time");
+}
+}
+
+int main (int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::String mode = argc > 1 ? juce::String (argv[1]) : juce::String();
+    if (mode == "--dump-presets")
+    {
+        for (const auto& pr : factoryPresets())
+        {
+            std::cout << pr.name << "|" << pr.category << "|";
+            for (const auto& [k, v] : pr.values) std::cout << k << "=" << v << " ";
+            std::cout << "\n";
+        }
+        return 0;
+    }
+    if (mode == "--serve")
+    {
+        // Each stdin line: "paramId=value ... _root=48 _bpm=150 _len=4 _pattern=0"; writes float32 stereo interleaved.
+        std::string line;
+        std::vector<float> out;
+        while (std::getline (std::cin, line))
+        {
+            Snapshot s;
+            double len = 4.0, bpm = 150.0;
+            int root = 48, pattern = 0;
+            std::istringstream ss (line);
+            std::string tok;
+            while (ss >> tok)
+            {
+                const auto eq = tok.find ('=');
+                if (eq == std::string::npos) continue;
+                const auto key = juce::String (tok.substr (0, eq));
+                const float value = std::stof (tok.substr (eq + 1));
+                if (key == "_len") len = value;
+                else if (key == "_bpm") bpm = value;
+                else if (key == "_root") root = (int) value;
+                else if (key == "_pattern") pattern = (int) value;
+                else s[key] = value;
+            }
+            const auto audio = render (paramsFromSnapshot (s), servePhrase (pattern, root, bpm, len), len);
+            out.resize ((size_t) audio.getNumSamples() * 2);
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+            {
+                out[(size_t) i * 2] = audio.getSample (0, i);
+                out[(size_t) i * 2 + 1] = audio.getSample (1, i);
+            }
+            std::fwrite (out.data(), sizeof (float), out.size(), stdout);
+            std::fflush (stdout);
+        }
+        return 0;
+    }
+    if (mode == "--calibrate")
+    {
+        for (const auto& pr : factoryPresets())
+        {
+            auto p = paramsFromSnapshot (pr.values);
+            // Two passes: the second at the found MASTER corrects presets that reach the soft ceiling.
+            double m = -20.0;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                p.masterDb = (float) m;
+                m += -1.0 - db (truePeak (render (p, phraseFor (pr.category), 3.5)));
+            }
+            std::cout << pr.name << "|" << juce::String (std::floor (m * 10.0) / 10.0, 1) << "\n";
+        }
+        return 0;
+    }
+    testFactoryPresets();
+    testPolyphonyAndStealing();
+    testMonoAndLegato();
+    testBlockSizesAndRates();
+    testTuningBendAndLfo();
+    testAnalogue();
+    testCpu();
+    std::cout << (failures == 0 ? "PASS " : "FAILED ") << (checks - failures) << "/" << checks << " checks\n";
+    return failures == 0 ? 0 : 1;
+}

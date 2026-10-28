@@ -1,0 +1,5 @@
+# JUCE: a link to the copy of PowerBass here; CMake fetches JUCE when it is missing (third_party/README.md)
+third_party/JUCE
+build/
+.DS_Store
+__pycache__/
