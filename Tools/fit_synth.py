@@ -3,6 +3,7 @@
   python3 fit_synth.py fit OUT.json        k-medoids over the references of each category (ALLOC presets), one
                                           preset fitted per medoid, starting from the hand-made presets
   python3 fit_synth.py apply FIT.json      writes them between the markers in Source/FactoryPresets.inc
+  python3 fit_synth.py extend OUT.json     2.3: the new archetypes on references no preset uses yet (then apply-refit)
   python3 fit_synth.py audit               distance of every factory preset to the nearest reference of its category
 
 Only feature numbers of the references are used; no reference audio ends up in PowerSynth. MASTER is fixed while
@@ -21,7 +22,7 @@ from synth_features import features, distance
 TESTS = os.environ.get("PS_TESTS", os.path.expanduser("~/Library/Caches/PowerSynthBuildUniversal/powersynth_tests_artefacts/Release/powersynth_tests"))
 INC = os.path.join(HERE, "..", "Source", "FactoryPresets.inc")
 SR, LEN, FIT_MASTER = 48000, 4.0, -14.0
-ALLOC = {"Leads": 24, "Rave & Hoover": 12, "Acid": 8, "Pads": 10, "Atmospheres": 14, "Stabs": 16, "Arps & Plucks": 14}
+ALLOC = {"Leads": 24, "Rave & Hoover": 12, "Acid": 8, "Pads": 10, "Textures": 10, "Atmospheres": 14, "Stabs": 16, "Arps & Plucks": 14}
 # name: (lo, hi, log-scale). 2.2 (2026-10-29): the 2.x engine (wavetables, WARP, FM, RING, pitch, GRIT, SMASH, SHIFT,
 # MORPH) with modern floors: SMASH >= 0.3 and DRIVE >= 0.25 (Roman: no plain classic sounds).
 SPACE = {
@@ -40,7 +41,7 @@ SEMIS = [0, 0, 0, 7, 12, -12, 5, 3, -5]
 CHOICES = {"filterMode": 5, "driveType": 4, "lfoShape": 5, "lfoTarget": 5, "delayTime": 9, "warpMode": 4, "lfoDiv": 9}
 # Usability limits per category (a lead must speak at once, a pad must swell).
 LIMITS = {"Leads": {"attack": (0.5, 40), "release": (5, 800)}, "Rave & Hoover": {"attack": (0.5, 60), "release": (5, 1500)},
-          "Acid": {"attack": (0.5, 20), "release": (5, 300)}, "Pads": {"attack": (30, 4000)}, "Atmospheres": {},
+          "Acid": {"attack": (0.5, 20), "release": (5, 300)}, "Pads": {"attack": (30, 4000)}, "Textures": {}, "Atmospheres": {},
           "Stabs": {"attack": (0.5, 15)}, "Arps & Plucks": {"attack": (0.5, 20), "release": (5, 800)}}
 FIXED = {}
 DEFAULTS = {"oscAShape": 2.0, "detune": 0.25, "oscALevel": 1.0, "oscBShape": 3.0, "oscBFine": 7.0, "oscBLevel": 0.4,
@@ -168,17 +169,19 @@ def fit_one(job):
     return clamp(cat, {**best, **FIXED.get(cat, {})}), bc, bparts
 
 
-def kmedoids(fs, k, iters=30, seed=1):
+def kmedoids(fs, k, iters=30, seed=1, fixed=()):
+    """fixed: indices that stay medoids (references already used by presets), so the others go where none is."""
     n = len(fs)
     D = np.array([[distance(a, b) for b in fs] for a in fs]); D = (D + D.T) / 2
     rng = np.random.default_rng(seed)
-    med = list(rng.choice(n, min(k, n), replace=False))
+    rest = [i for i in range(n) if i not in fixed]
+    med = list(fixed) + list(rng.choice(rest, max(0, min(k, n) - len(fixed)), replace=False))
     for _ in range(iters):
         lab = np.argmin(D[:, med], axis=1)
         new = []
         for j in range(len(med)):
             m = np.where(lab == j)[0]
-            new.append(med[j] if len(m) == 0 else int(m[np.argmin(D[np.ix_(m, m)].sum(axis=1))]))
+            new.append(med[j] if len(m) == 0 or med[j] in fixed else int(m[np.argmin(D[np.ix_(m, m)].sum(axis=1))]))
         if new == med:
             break
         med = new
@@ -274,7 +277,7 @@ def audit():
         name, cat, vals = line.split("|")
         p = {k: float(v) for k, v in (t.split("=") for t in vals.split())}
         best = (1e9, None)
-        for ref in [x for x in refs if x["category"] == cat]:
+        for ref in pool_of(refs, cat):
             root, phrase, bpm, rlen, alen = setup(ref)
             f = features(r.render({**p, "master": FIT_MASTER}, root, phrase, bpm, rlen)[: int(alen * SR)], SR)
             if f is not None:
@@ -323,6 +326,80 @@ def refit(out_path):
     print("median distance %.2f -> %.2f, %d presets in %.0f s" % (b[len(b) // 2], a[len(a) // 2], len(out), time.time() - t0))
 
 
+# 2.3 (2026-10-29): Textures, a category of its own, are fitted to the texture loops among the atmosphere references.
+TEXTURE_FOLDERS = ("Machine Texture Loops", "Industrial Noise")
+
+
+def pool_of(refs, cat):
+    if cat == "Textures":
+        return [x for x in refs if x["category"] == "Atmospheres" and any(f in x["file"] for f in TEXTURE_FOLDERS)]
+    return [x for x in refs if x["category"] == cat]
+
+
+def extend(out_path):
+    """2.3: the new archetypes (lines marked '// 2.3 archetype') are fitted to references that no preset of the library
+    uses yet: k-medoids with the used references fixed, new presets greedily on the free medoids (when there are fewer
+    free references than new presets, as for Pads, the last ones share)."""
+    refs = pickle.load(open(os.path.join(HERE, "..", "Референсы", "synth_features.pkl"), "rb"))
+    lib = hand_presets()
+    # FIT_NAMES="a,b": refit only these (already fitted) presets, choosing among every reference no other preset uses,
+    # and starting also from the best-fitted presets of their category.
+    only = [n.strip() for n in os.environ.get("FIT_NAMES", "").split(",") if n.strip()]
+    marked, used, quality = set(), {}, {}
+    for line in open(INC, encoding="utf-8"):
+        m = ENTRY.match(line)
+        if not m: continue
+        q = re.search(r"// fit ([\d.]+)", line)
+        if q: quality[m.group(1)] = float(q.group(1))
+        if (m.group(1) in only) if only else ("// 2.3 archetype" in line):
+            marked.add(m.group(1))
+        else:
+            t = re.search(r" to (.+\.wav)\s*$", line)
+            if t: used.setdefault(m.group(2), set()).add(t.group(1))
+    r = Renderer()
+    jobs, meta = [], []
+    for cat in ALLOC:
+        new = [e for e in lib if e["cat"] == cat and e["name"] in marked]
+        if not new: continue
+        pool = pool_of(refs, cat)
+        fixed = [i for i, x in enumerate(pool) if x["file"].split("/")[-1] in used.get(cat, set()) | used.get("Atmospheres" if cat == "Textures" else cat, set())]
+        k = min(len(pool), len(fixed) + len(new))
+        if only:
+            meds = [i for i in range(len(pool)) if i not in fixed]
+        else:
+            meds = [i for i in kmedoids([x["feat"] for x in pool], k, fixed=fixed) if i not in fixed]
+        best = [x["params"] for x in sorted((x for x in lib if x["cat"] == cat and x["name"] not in marked and x["name"] in quality),
+                                            key=lambda x: quality[x["name"]])[:4]] if only else []
+        print(cat, "pool", len(pool), "used", len(fixed), "new", len(new), "free medoids", len(meds), flush=True)
+        D = []
+        for e in new:
+            row = []
+            for i in meds:
+                root, phrase, bpm, rlen, alen = setup(pool[i])
+                f = features(r.render({**clamp(cat, e["params"]), "master": FIT_MASTER}, root, phrase, bpm, rlen)[: int(alen * SR)], SR)
+                row.append(1e9 if f is None else distance(f, pool[i]["feat"]))
+            D.append(row)
+        free = list(range(len(meds)))
+        for a in sorted(range(len(new)), key=lambda a: min(D[a])):
+            if not free: free = list(range(len(meds)))   # more new presets than free references
+            b = min(free, key=lambda j: D[a][j]); free.remove(b)
+            family = [x["params"] for x in new if x is not new[a] and x["name"].rsplit(" ", 1)[0] == new[a]["name"].rsplit(" ", 1)[0]]
+            jobs.append((pool[meds[b]], cat, [new[a]["params"]] + family + best, 3000 + len(jobs), int(os.environ.get("FIT_ITERS", 60))))
+            meta.append((new[a], pool[meds[b]], D[a][b]))
+    r.p.kill()
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=int(os.environ.get("FIT_WORKERS", 9))) as ex:
+        results = list(ex.map(fit_one, jobs, chunksize=1))
+    out = []
+    for (e, ref, before), (p, c, parts) in zip(meta, results):
+        out.append({"name": e["name"], "category": e["cat"], "target": ref["file"].split("/")[-1], "params": p, "before": before,
+                    "distance": c, "parts": parts})
+        print("%-26s %-12s %5.2f -> %5.2f  <- %s" % (e["name"], e["cat"], before, c, ref["file"].split("/")[-1]), flush=True)
+    json.dump(out, open(out_path, "w"), indent=1, ensure_ascii=False)
+    b = sorted(o["before"] for o in out); a = sorted(o["distance"] for o in out)
+    print("median distance %.2f -> %.2f, %d presets in %.0f s" % (b[len(b) // 2], a[len(a) // 2], len(out), time.time() - t0))
+
+
 BEATS = [4, 2, 1, 0.5, 0.25, 0.125, 2 / 3, 1 / 3, 0.75]
 
 
@@ -360,4 +437,5 @@ def apply_refit(fit_path):
 
 if __name__ == "__main__":
     {"fit": lambda: fit(sys.argv[2]), "apply": lambda: apply(sys.argv[2]), "audit": audit, "refit": lambda: refit(sys.argv[2]),
+     "extend": lambda: extend(sys.argv[2]),
      "apply-refit": lambda: apply_refit(sys.argv[2])}[sys.argv[1]]()

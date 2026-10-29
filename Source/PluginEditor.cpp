@@ -405,6 +405,67 @@ void fillSelection (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 const juce::Colour selectedText = colours::ink;
 }
 
+void ps::ui::drawStar (juce::Graphics& g, juce::Rectangle<float> box, bool filled, juce::Colour c, float stroke)
+{
+    const float outer = std::min (box.getWidth(), box.getHeight()) * 0.5f;
+    juce::Path star;
+    star.addStar (box.getCentre().translated (0.0f, outer * 0.06f), 5, outer * 0.42f, outer, 0.0f);
+    g.setColour (c);
+    if (filled)
+        g.fillPath (star);
+    else
+        g.strokePath (star, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+void StarButton::paintButton (juce::Graphics& g, bool over, bool down)
+{
+    getLookAndFeel().drawButtonBackground (g, *this, findColour (juce::TextButton::buttonColourId), over, down);
+    const float d = std::min (getWidth(), getHeight()) * 0.5f;
+    const bool on = starred;
+    drawStar (g, getLocalBounds().toFloat().withSizeKeepingCentre (d, d), on,
+              on ? colours::accent : (over && isEnabled() ? colours::text : colours::dim.withAlpha (isEnabled() ? 1.0f : 0.4f)),
+              std::max (1.2f, d * 0.09f));
+}
+
+PresetBrowser::StarSpot::StarSpot (PresetBrowser& b) : owner (b)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setTooltip (juce::String::fromUTF8 ("Звёздочка: звук попадёт в Favourites (во всех проектах). Щелчок ещё раз — убрать"));
+}
+
+juce::Component* PresetBrowser::refreshComponentForRow (int row, bool, juce::Component* existing)
+{
+    auto* spot = dynamic_cast<StarSpot*> (existing);
+    if (spot == nullptr)
+    {
+        delete existing;
+        spot = new StarSpot (*this);
+    }
+    spot->row = row;
+    return spot;
+}
+
+void PresetBrowser::toggleFavourite (int row)
+{
+    if (row < 0 || row >= numShown())
+        return;
+    proc.library.toggleFavourite (shown[(size_t) row]);
+    favouritesChanged();
+    if (onFavouritesChanged)
+        onFavouritesChanged();
+}
+
+void PresetBrowser::favouritesChanged()
+{
+    if (category == ps::favouritesCategory)
+        refilter(); // an unstarred preset leaves the list at once
+    else
+    {
+        list.repaint();
+        categories.repaint();
+    }
+}
+
 PresetBrowser::PresetBrowser (PowerSynthProcessor& p) : proc (p)
 {
     setWantsKeyboardFocus (true);
@@ -429,6 +490,7 @@ PresetBrowser::PresetBrowser (PowerSynthProcessor& p) : proc (p)
     list.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
     list.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, colours::faint);
     list.addMouseListener (this, true);
+    list.setComponentID ("presetList");
     for (auto* c : std::initializer_list<juce::Component*> { &search, &auditionButton, &closeButton, &allTypesButton, &categories, &list })
         addAndMakeVisible (c);
 }
@@ -585,12 +647,18 @@ bool PresetBrowser::keyPressed (const juce::KeyPress& k)
 void PresetBrowser::mouseMove (const juce::MouseEvent& e)
 {
     int row = -1;
+    bool star = false;
     if (e.eventComponent == &list || list.isParentOf (e.eventComponent))
-        row = list.getRowContainingPosition (e.getEventRelativeTo (&list).x, e.getEventRelativeTo (&list).y);
-    if (row != hoverRow)
+    {
+        const auto at = e.getEventRelativeTo (&list).getPosition();
+        row = list.getRowContainingPosition (at.x, at.y);
+        star = row >= 0 && at.x < starWidth();
+    }
+    if (row != hoverRow || star != hoverStar)
     {
         list.repaintRow (hoverRow);
         hoverRow = row;
+        hoverStar = star;
         list.repaintRow (hoverRow);
     }
 }
@@ -620,9 +688,16 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int w, int h, 
     }
     // Type (and genre when all genres are listed) on the right, quieter than the name.
     juce::String meta = p.category == userCategory ? juce::String ("MY PRESET") : p.group.toUpperCase();
-    if (category.isEmpty() && p.category != userCategory)
+    if ((category.isEmpty() || category == ps::favouritesCategory) && p.category != userCategory) // mixed lists show the genre
         meta = p.category.toUpperCase() + (meta.isNotEmpty() ? "   " + meta : juce::String());
-    auto text = r.reduced (10.0f * s, 0.0f);
+    // The star at the left: accent when starred, a quiet outline otherwise (brighter under the mouse).
+    const float starW = (float) starWidth();
+    const auto starBox = juce::Rectangle<float> (r.getX() + 4.0f * s, r.getY(), starW - 6.0f * s, r.getHeight()).withSizeKeepingCentre (13.0f * s, 13.0f * s);
+    const bool overStar = row == hoverRow && hoverStar;
+    const auto starColour = p.favourite ? (selected ? selectedText : colours::accent)
+                                        : (selected ? selectedText.withAlpha (overStar ? 0.9f : 0.4f) : (overStar ? colours::text : colours::faint));
+    drawStar (g, starBox, p.favourite, starColour, 1.3f * s);
+    auto text = r.withTrimmedLeft (starW - 2.0f * s).reduced (8.0f * s, 0.0f);
     const auto metaFont = uiFont (10.5f * s, true).withExtraKerningFactor (0.08f);
     const float metaW = (float) juce::GlyphArrangement::getStringWidthInt (metaFont, meta);
     g.setFont (metaFont);
@@ -655,11 +730,13 @@ void PresetBrowser::paint (juce::Graphics& g)
 
     if (shown.empty())
     {
-        const bool noOwn = category == userCategory && search.getText().trim().isEmpty() && selectedGroups.isEmpty();
+        const bool unfiltered = search.getText().trim().isEmpty() && selectedGroups.isEmpty();
+        const bool noOwn = category == userCategory && unfiltered, noFavourites = category == ps::favouritesCategory && unfiltered;
         g.setColour (colours::dim);
         g.setFont (uiFont (14.0f * s));
         g.drawFittedText (noOwn ? "No presets of your own yet.\nSave one with SAVE at the top."
-                                : "No presets match.\nClear the search or choose another type.",
+                                : noFavourites ? "No favourites yet.\nClick the star at the left of a preset, or the star next to its name at the top."
+                                               : "No presets match.\nClear the search or choose another type.",
                           emptyArea, juce::Justification::centred, 2);
     }
 }
@@ -735,8 +812,8 @@ int PresetBrowser::Categories::rowAt (int y) const
     const int rowH = juce::roundToInt (30 * s), n = owner.categoryNames.size() + 1;
     if (y < rowH * n)
         return y / rowH;
-    const int userTop = rowH * n + juce::roundToInt (14 * s);
-    return y >= userTop && y < userTop + rowH ? n : -1;
+    const int bottomTop = rowH * n + juce::roundToInt (14 * s); // Favourites, then My presets
+    return y >= bottomTop && y < bottomTop + 2 * rowH ? n + (y - bottomTop) / rowH : -1;
 }
 
 void PresetBrowser::Categories::paint (juce::Graphics& g)
@@ -744,13 +821,13 @@ void PresetBrowser::Categories::paint (juce::Graphics& g)
     const float s = owner.scale();
     const int rowH = juce::roundToInt (30 * s), n = owner.categoryNames.size() + 1;
     const auto& all = owner.proc.library.all();
-    for (int i = 0; i <= n; ++i)
+    for (int i = 0; i <= n + 1; ++i)
     {
-        const bool user = i == n;
-        const juce::String key = i == 0 ? juce::String() : (user ? userCategory : owner.categoryNames[i - 1]);
-        const juce::String label = i == 0 ? juce::String ("All presets") : (user ? juce::String ("My presets") : key);
-        const int top = user ? rowH * n + juce::roundToInt (14 * s) : rowH * i;
-        if (user)
+        const bool favourites = i == n, user = i == n + 1;
+        const juce::String key = i == 0 ? juce::String() : (favourites ? ps::favouritesCategory : (user ? userCategory : owner.categoryNames[i - 1]));
+        const juce::String label = i == 0 ? juce::String ("All presets") : (favourites ? juce::String ("Favourites") : (user ? juce::String ("My presets") : key));
+        const int top = i >= n ? rowH * i + juce::roundToInt (14 * s) : rowH * i;
+        if (favourites)
         {
             g.setColour (colours::line);
             g.fillRect (juce::Rectangle<int> (0, rowH * n + juce::roundToInt (7 * s), getWidth(), 1));
@@ -769,6 +846,9 @@ void PresetBrowser::Categories::paint (juce::Graphics& g)
         g.setFont (uiFont (12.0f * s, true));
         g.setColour (selected ? selectedText.withAlpha (0.65f) : colours::dim);
         g.drawText (count, text.removeFromRight (34.0f * s), juce::Justification::centredRight);
+        if (favourites)
+            drawStar (g, text.removeFromRight (16.0f * s).withSizeKeepingCentre (11.0f * s, 11.0f * s), true,
+                      selected ? selectedText : colours::accent, 1.0f);
         g.setFont (uiFont (13.5f * s));
         g.setColour (selected ? selectedText : colours::text);
         g.drawText (label, text, juce::Justification::centredLeft, true);
@@ -790,7 +870,7 @@ void PresetBrowser::Categories::mouseDown (const juce::MouseEvent& e)
     const int row = rowAt (e.y), n = owner.categoryNames.size() + 1;
     if (row < 0)
         return;
-    owner.setCategory (row == 0 ? juce::String() : (row == n ? userCategory : owner.categoryNames[row - 1]));
+    owner.setCategory (row == 0 ? juce::String() : (row == n ? ps::favouritesCategory : (row == n + 1 ? userCategory : owner.categoryNames[row - 1])));
 }
 
 //==============================================================================
@@ -856,7 +936,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
              &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &master, &filterMode, &driveType,
              &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
-             &previewButton })
+             &previewButton, &favouriteButton })
         addAndMakeVisible (c);
     addChildComponent (advanced);
     waveform.setComponentID ("waveform");
@@ -866,6 +946,18 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     browser.setComponentID ("presetBrowser");
     advancedButton.setComponentID ("advancedButton");
     nextButton.setComponentID ("nextButton");
+    favouriteButton.setComponentID ("favouriteButton");
+    favouriteButton.onClick = [this]
+    {
+        const int i = proc.library.indexOf (proc.getPresetName());
+        if (i < 0)
+            return;
+        proc.library.toggleFavourite (i);
+        refreshHeader();
+        if (browser.isVisible())
+            browser.favouritesChanged();
+    };
+    favouriteButton.setTooltip (juce::String::fromUTF8 ("Отметить звук звёздочкой: он появится в списке пресетов в Favourites (во всех проектах)"));
 
     prevButton.onClick = [this] { stepPreset (-1); };
     nextButton.onClick = [this] { stepPreset (1); };
@@ -882,6 +974,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
         browser.open();
     };
     browser.onLoaded = [this] { refreshHeader(); };
+    browser.onFavouritesChanged = [this] { refreshHeader(); };
     browser.onClose = [this]
     {
         browser.setVisible (false);
@@ -1018,6 +1111,8 @@ void PowerSynthEditor::resized()
     saveButton.setBounds (centre.removeFromRight (S (64)));
     centre.removeFromRight (S (6));
     nextButton.setBounds (centre.removeFromRight (S (32)));
+    centre.removeFromLeft (S (6));
+    favouriteButton.setBounds (centre.removeFromLeft (S (32)));
     presetButton.setBounds (centre.reduced (S (6), 0));
 
     auto body = getLocalBounds().withTrimmedTop (S (72)).reduced (S (20), 0).withTrimmedBottom (S (16));
@@ -1134,6 +1229,14 @@ void PowerSynthEditor::timerCallback()
 }
 
 //==============================================================================
+void PowerSynthEditor::refreshHeader()
+{
+    presetButton.setButtonText (proc.getPresetName());
+    const int i = proc.library.indexOf (proc.getPresetName());
+    favouriteButton.setEnabled (i >= 0);
+    favouriteButton.setStarred (i >= 0 && proc.library.all()[(size_t) i].favourite);
+}
+
 void PowerSynthEditor::stepPreset (int delta)
 {
     if (browser.isVisible()) // with the browser open, < > step through its filtered list

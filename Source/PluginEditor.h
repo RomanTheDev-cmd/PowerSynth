@@ -103,6 +103,21 @@ private:
     int holdFrames[2] {};
 };
 
+// A five-pointed star in box: filled for a favourite, an outline otherwise.
+void drawStar (juce::Graphics&, juce::Rectangle<float> box, bool filled, juce::Colour, float stroke);
+
+// The header star (2026-10-29): stars the current preset, which then shows under Favourites in the browser.
+class StarButton : public juce::TextButton
+{
+public:
+    void setStarred (bool on) { if (on != starred) { starred = on; repaint(); } }
+    bool isStarred() const { return starred; }
+    void paintButton (juce::Graphics&, bool over, bool down) override;
+
+private:
+    bool starred = false; // not the toggle state: a toggled button gets the accent fill, which would hide the star
+};
+
 // Preset browser: opens over the controls from the preset name. Categories on the left, a search field
 // and sound-type filters on top, every matching preset in one scrolling list. Choosing a preset loads it
 // at once (and plays it when AUDITION is on); arrow keys step through the list, Enter or Escape closes.
@@ -116,6 +131,8 @@ public:
     void toggleGroup (const juce::String&);     // sound type; none selected = every type
     void setSearch (const juce::String&);
     void choose (int row, bool close);
+    void toggleFavourite (int row);             // the star of a row: never loads the preset
+    void favouritesChanged();                   // a star changed elsewhere (the header)
     int numShown() const { return (int) shown.size(); }
     int firstVisibleRow() const { return list.getRowContainingPosition (1, 1); }
 
@@ -124,9 +141,18 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
-    std::function<void()> onLoaded, onClose;
+    std::function<void()> onLoaded, onClose, onFavouritesChanged;
 
 private:
+    // Click target over the star at the left of a row; the rest of the row passes clicks to the list.
+    struct StarSpot : juce::Component, juce::SettableTooltipClient
+    {
+        explicit StarSpot (PresetBrowser&);
+        bool hitTest (int x, int) override { return row >= 0 && row < owner.numShown() && x < owner.starWidth(); }
+        void mouseDown (const juce::MouseEvent& e) override { if (e.getNumberOfClicks() == 1) owner.toggleFavourite (row); }
+        PresetBrowser& owner;
+        int row = -1;
+    };
     struct SearchField : juce::TextEditor
     {
         std::function<bool (const juce::KeyPress&)> onKey;
@@ -147,6 +173,7 @@ private:
 
     int getNumRows() override { return numShown(); }
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
+    juce::Component* refreshComponentForRow (int row, bool selected, juce::Component* existing) override;
     void selectedRowsChanged (int lastRow) override;
     void listBoxItemDoubleClicked (int, const juce::MouseEvent&) override { close(); }
     void returnKeyPressed (int) override { close(); }
@@ -158,6 +185,7 @@ private:
     void selectCurrent();
     void close() { if (onClose) onClose(); }
     float scale() const { return getWidth() / 1032.0f; }
+    int starWidth() const { return juce::roundToInt (30.0f * scale()); }
 
     PowerSynthProcessor& proc;
     SearchField search;
@@ -170,6 +198,7 @@ private:
     std::vector<int> shown;
     bool updating = false;
     int hoverRow = -1;
+    bool hoverStar = false;
     juce::Rectangle<int> titleArea, searchArea, emptyArea;
 };
 
@@ -204,7 +233,7 @@ private:
     void savePreset();
     void askForName (const juce::String& title, const juce::String& initial, std::function<void (juce::String)> done);
     void showError (const juce::String& message);
-    void refreshHeader() { presetButton.setButtonText (proc.getPresetName()); }
+    void refreshHeader(); // the preset name and its star
 
     PowerSynthProcessor& proc;
     ps::ui::LookAndFeel lnf;
@@ -212,6 +241,7 @@ private:
 
     juce::TextButton prevButton { "<" }, nextButton { ">" }, presetButton, saveButton { "SAVE" }, advancedButton { "ADVANCED" },
         menuButton { "..." }, previewButton { "PREVIEW" };
+    ps::ui::StarButton favouriteButton;
 
     ps::ui::Knob oscAShape, unison, detune, oscAOct, oscALevel, warp, ring;
     ps::ui::Knob oscBLevel, oscBShape, oscBOct, oscBSemi, fmAmount, noise;

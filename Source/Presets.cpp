@@ -90,7 +90,7 @@ std::vector<int> filterPresets (const std::vector<Preset>& presets, const juce::
     for (int i = 0; i < (int) presets.size(); ++i)
     {
         const auto& p = presets[(size_t) i];
-        if (category.isNotEmpty() && p.category != category)
+        if (category == favouritesCategory ? ! p.favourite : (category.isNotEmpty() && p.category != category))
             continue;
         if (! groups.isEmpty() && ! groups.contains (p.group))
             continue;
@@ -167,6 +167,56 @@ bool presetFromXml (const juce::String& xml, Preset& out, juce::String& error)
 }
 
 //==============================================================================
+// Favourites.json: { "format": 1, "factory": [names], "user": [names] }. Keys inside: "F|name" and "U|name".
+namespace
+{
+juce::String favouriteKey (const Preset& p) { return (p.isFactory() ? "F|" : "U|") + p.name; }
+
+juce::StringArray readFavourites (const juce::File& file)
+{
+    juce::StringArray keys;
+    const auto json = juce::JSON::parse (file.loadFileAsString());
+    if (auto* obj = json.getDynamicObject())
+        for (auto [field, prefix] : { std::pair { "factory", "F|" }, std::pair { "user", "U|" } })
+            if (auto* names = obj->getProperty (field).getArray())
+                for (const auto& n : *names)
+                    if (n.isString() && n.toString().isNotEmpty())
+                        keys.addIfNotAlreadyThere (prefix + n.toString());
+    return keys;
+}
+
+bool writeFavourites (const juce::File& file, const juce::StringArray& keys)
+{
+    juce::Array<juce::var> factory, user;
+    for (const auto& k : keys)
+        (k.startsWith ("F|") ? factory : user).add (k.substring (2));
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty ("format", 1);
+    obj->setProperty ("factory", factory);
+    obj->setProperty ("user", user);
+    return file.getParentDirectory().createDirectory() && file.replaceWithText (juce::JSON::toString (juce::var (obj.release())));
+}
+
+void markFavourites (std::vector<Preset>& presets, const juce::StringArray& keys)
+{
+    for (auto& p : presets)
+        p.favourite = keys.contains (favouriteKey (p));
+}
+
+// Replaces one key by another (empty = drop it) in the file, keeping every other instance's stars.
+void moveFavourite (const juce::File& file, const juce::String& from, const juce::String& to)
+{
+    auto keys = readFavourites (file);
+    if (! keys.contains (from) && (to.isEmpty() || ! keys.contains (to)))
+        return;
+    keys.removeString (from);
+    if (to.isNotEmpty())
+        keys.addIfNotAlreadyThere (to);
+    writeFavourites (file, keys);
+}
+}
+
+//==============================================================================
 PresetLibrary::PresetLibrary (juce::File dir) : userDir (std::move (dir)) { rescan(); }
 
 juce::File PresetLibrary::defaultUserDirectory()
@@ -196,6 +246,7 @@ void PresetLibrary::rescan()
             presets.push_back (std::move (p));
         }
     }
+    markFavourites (presets, readFavourites (favouritesFile()));
 }
 
 int PresetLibrary::indexOf (const juce::String& name) const
@@ -214,11 +265,14 @@ bool PresetLibrary::saveUser (const juce::String& name, const Snapshot& values, 
         return false;
     }
     const auto file = fileFor (name);
+    const bool isNew = ! file.existsAsFile();
     if (! file.replaceWithText (presetToXml (sanitiseName (name), "User", values)))
     {
         error = "Cannot write " + file.getFullPathName();
         return false;
     }
+    if (isNew) // a new preset starts without a star, even if one of that name was deleted outside the plug-in
+        moveFavourite (favouritesFile(), "U|" + file.getFileNameWithoutExtension(), {});
     rescan();
     return true;
 }
@@ -243,6 +297,7 @@ bool PresetLibrary::rename (int index, const juce::String& newName, juce::String
         error = "Rename failed";
         return false;
     }
+    moveFavourite (favouritesFile(), "U|" + old.getFileNameWithoutExtension(), "U|" + target.getFileNameWithoutExtension());
     rescan();
     return true;
 }
@@ -257,13 +312,32 @@ bool PresetLibrary::remove (int index, juce::String& error)
     // Moved to the trash rather than destroyed, so a mistaken delete can be undone.
     const auto file = presets[(size_t) index].file;
     // Only ever to the Trash: if that is impossible the file stays (never a silent hard delete).
-    if (! file.moveToTrash())
+    if (! moveToTrash (file))
     {
         error = "Could not move the preset to the Trash; nothing was deleted";
         return false;
     }
+    moveFavourite (favouritesFile(), "U|" + file.getFileNameWithoutExtension(), {});
     rescan();
     return true;
+}
+
+bool PresetLibrary::toggleFavourite (int index)
+{
+    if (index < 0 || index >= (int) presets.size())
+        return false;
+    auto keys = readFavourites (favouritesFile()); // fresh: another instance may have starred something
+    const auto key = favouriteKey (presets[(size_t) index]);
+    const bool on = ! keys.contains (key);
+    if (on)
+        keys.add (key);
+    else
+        keys.removeString (key);
+    if (writeFavourites (favouritesFile(), keys))
+        markFavourites (presets, keys);
+    else
+        markFavourites (presets, readFavourites (favouritesFile()));
+    return presets[(size_t) index].favourite;
 }
 
 bool PresetLibrary::importFile (const juce::File& source, juce::String& importedName, juce::String& error)

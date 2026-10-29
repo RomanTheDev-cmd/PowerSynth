@@ -1,6 +1,6 @@
 {
   "Name": "PowerSynth",
-  "Version": "2.2.0",
+  "Version": "2.3.0",
   "Factory Info": {
     "Vendor": "MyDarknessDays",
     "URL": "",
@@ -17,7 +17,7 @@
       "Category": "Audio Module Class",
       "Name": "PowerSynth",
       "Vendor": "MyDarknessDays",
-      "Version": "2.2.0",
+      "Version": "2.3.0",
       "SDKVersion": "VST 3.8.0",
       "Sub Categories": [
         "Instrument",
@@ -33,7 +33,7 @@
       "Category": "Component Controller Class",
       "Name": "PowerSynth",
       "Vendor": "MyDarknessDays",
-      "Version": "2.2.0",
+      "Version": "2.3.0",
       "SDKVersion": "VST 3.8.0",
       "Sub Categories": [
         "Instrument",

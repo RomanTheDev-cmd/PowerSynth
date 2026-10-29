@@ -14,8 +14,12 @@ struct Preset
     Snapshot values;
     juce::File file; // empty for factory presets
     juce::String group; // sub-group inside the category (e.g. "Long", "Reese"), for the browser
+    bool favourite = false; // starred by the user (set by PresetLibrary)
     bool isFactory() const { return file == juce::File(); }
 };
+
+// Browser filter of the starred presets (Roman, 2026-10-29: "a star on favourite sounds in every plug-in").
+inline const juce::String favouritesCategory { "Favourites" };
 
 const std::vector<Preset>& factoryPresets();
 
@@ -28,7 +32,8 @@ const Snapshot& legacyNeutral();
 void applySnapshot (juce::AudioProcessorValueTreeState& state, const Snapshot& values);
 SynthParams paramsFromSnapshot (const Snapshot& values);
 
-// Preset browser filter. category: "" = all, otherwise a category name ("User" = the user's own presets).
+// Preset browser filter. category: "" = all, favouritesCategory = the starred ones, otherwise a category name
+// ("User" = the user's own presets).
 // groups: any of these browser groups (empty = all). text: every word must appear (case-insensitive) in
 // the name, the category or the group. Returns indices into presets: genres in library order (user
 // presets last), names in natural alphabetical order within a genre.
@@ -56,6 +61,13 @@ public:
     bool remove (int index, juce::String& error);
     bool importFile (const juce::File& source, juce::String& importedName, juce::String& error);
     bool exportTo (const juce::File& target, const juce::String& name, const Snapshot& values, juce::String& error) const;
+
+    // Favourites: a star on any preset, shared by every instance and project. Stored in Favourites.json in the user
+    // preset folder; a factory preset and a user preset of the same name are starred separately. A renamed user preset
+    // keeps its star, a deleted one loses it. Reads the file first, so stars set by another instance are kept.
+    bool toggleFavourite (int index); // returns the new state; written at once
+    juce::File favouritesFile() const { return userDir.getChildFile ("Favourites.json"); }
+    std::function<bool (const juce::File&)> moveToTrash = [] (const juce::File& f) { return f.moveToTrash(); }; // tests replace it
 
 private:
     juce::File userDir;

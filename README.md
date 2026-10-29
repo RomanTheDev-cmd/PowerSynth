@@ -12,17 +12,18 @@
 Отзыв Романа о 1.0: «никакущий… просто классический синтезатор… агрессии нет вообще и какого-то характера… обычные звуки аля муг вместо современных шранц и техно вещей». Движок 1.0 был классическим вычитающим (morph sine→square, чистый фильтр, мягкий перегруз на выходе). В 2.0 добавлено то, на чём строят современный hard techno и шранц:
 скрытые таблицы волн (9 форм), FM на них, деформация WARP (синк, изгиб, ШИМ-хувер, складывание), кольцевая модуляция, питч-огибающая, перегруз внутри фильтра (GRIT), гребёнка COMB, сдвиг частоты перед дисторшном (SHIFT) и OTT-подобное сжатие (SMASH). Все новые ручки по умолчанию выключены — проекты 1.x звучат как раньше.
 
+**Пресеты 2.3 (2026-10-29):** по просьбе Романа «добавь ещё больше лидов, текстур и пэдов» — +31 пресет, всего 102. Лиды (+13): Trance Gate, Schranz Hook, Metal Lead, Glide Fold, Robot Talk; пэды (+8): Pump Pad (сайдчейн-качание в темпе), Frozen Glass (FM-стекло), Industrial Drone, Hollow Morph; новая категория **Textures** (10): Machine Texture, Industrial Noise, Metal Scrape, Radio Static. Каждый подогнан к референсу TSOHT, который не занят прежними пресетами (`Tools/extend_library.py` → `fit_synth.py extend` / `apply-refit`; текстуры — к лупам Machine Texture и Industrial Noise), с теми же границами «современности»; громкость — true peak −1 dBTP. **Избранное:** звёздочка у любого пресета, пункт «Favourites» в списке.
 **Пресеты 2.2 (2026-10-29):** на 2.1 Роман сказал «неплохо, но очень далеко от референсов». Каждый из 71 современного пресета подогнан к своему референсу TSOHT (медоиду своей категории) на новом движке, с границами «современности» (SMASH ≥ 0,3, дисторшн ≥ 0,25, чистая классическая волна только с WARP или FM). Медианное расстояние до референсов 16,4 → 2,9 (как у подобранной библиотеки 1.0, но на современном движке). Имена прежние; в `Source/FactoryPresets.inc` у каждого указан референс. Подборщик: `Tools/fit_synth.py refit` / `apply-refit`.
 **Пресеты 2.1 (2026-10-29):** по отзыву Романа на 2.0 («сделай нормальные современные примеры и классик удали… все звучит слишком классически») библиотека собрана заново, 71 пресет, без Classic: в основе таблицы, синк, ШИМ и FM на таблицах; движение внутри ноты (MORPH — огибающая двигает форму и WARP; LFO в темпе на SHAPE и FM); HP/BP/COMB вместо резонансного ФНЧ, жёсткий дисторшн, SMASH, SHIFT. Классическая синусоида — только как основа FM-колокола. Leads: Razor, Rave Saw Wall, FM Growl, Industrial Siren, Vox Scream; Rave & Hoover: Hoover 2000, Rave Signal X, Laser; Acid: Acid Razor; Pads: OTT Texture, Dark Choir Grit; Atmospheres: Machine Room, Distorted Abyss, Rhythmic Machine; Stabs: Schranz Shot X, Modern Rave Chord, Metal Impact, Zap Shot; Arps & Plucks: Zap Pluck, FM Bell Grit, Seq Growl — у каждого 2–5 вариантов. Все выровнены по true peak −1 dBTP (MASTER до +12 дБ с 2.2).
 Новое в 2.1: **MORPH** (блок FILTER) — огибающая фильтра двигает форму волны и WARP; у LFO цель **FM**.
 
 ## Установка
 
-**Установщики** из папки `Установщики`: `PowerSynth-2.2.0-macOS.pkg` и `PowerSynth-2.2.0-Windows-x64-Setup.exe`.
+**Установщики** из папки `Установщики`: `PowerSynth-2.3.0-macOS.pkg` и `PowerSynth-2.3.0-Windows-x64-Setup.exe`.
 
 **macOS вручную** из `Сборки/macOS`: `PowerSynth.component` → `~/Library/Audio/Plug-Ins/Components/`, `PowerSynth.vst3` → `~/Library/Audio/Plug-Ins/VST3/`. На этом Mac плагин уже установлен. В Logic: AU Instruments → MyDarknessDays → PowerSynth (после перезапуска Logic).
 
-**Windows вручную:** папку `PowerSynth.vst3` из `Сборки/PowerSynth-2.2.0-Windows-x64.zip` целиком в `C:\Program Files\Common Files\VST3\`.
+**Windows вручную:** папку `PowerSynth.vst3` из `Сборки/PowerSynth-2.3.0-Windows-x64.zip` целиком в `C:\Program Files\Common Files\VST3\`.
 
 ## Регуляторы
 
@@ -41,7 +42,7 @@
 
 **ADVANCED:** передискретизация перегруза 2x / 4x / 8x (пресеты её не меняют), тонкая подстройка OSC B (B FINE), атака, сустейн и релиз огибающей фильтра, чувствительность к velocity, время и обратная связь дилея, размер реверберации, диапазон pitch bend.
 
-**Пресеты:** щелчок по имени открывает список: слева категории (Leads, Rave & Hoover, Acid, Pads, Atmospheres, Stabs, Arps & Plucks) и свои пресеты, сверху поиск и типы звука (Saw, Square, FM, Noise). Свои пресеты — `Документы/PowerSynth/Presets`, формат `.pspreset`. 118 заводских пресетов: 20 сделаны вручную, 98 подобраны по признакам референсов TSOHT (спектр относительно ноты, шумность, плотность, атака, длительность звучания, движение, стерео). Имя говорит, на какой материал похож звук: Industrial Lead, Schranz Hook, Trance Melodie, Ravy Saw, Metal Rave, Dark Acid, Theme Pad, Abstract Atmo, Machine Texture, Schranz Shot, Screech, Horror Bell, Driving Sequence, Theme Arp и другие с номерами. Все выровнены по громкости: true peak −1 dBTP на стандартной фразе (с межотсчётными пиками, как у PowerKick).
+**Пресеты:** щелчок по имени открывает список: слева категории (Leads, Rave & Hoover, Acid, Pads, Textures, Atmospheres, Stabs, Arps & Plucks), «Favourites» и свои пресеты, сверху поиск и типы звука. Звёздочка слева от имени (или рядом с именем в шапке) добавляет пресет в «Favourites»; звёздочки общие для всех проектов и экземпляров, хранятся в `Favourites.json` в папке своих пресетов. Свои пресеты — `Документы/PowerSynth/Presets`, формат `.pspreset`. 102 заводских пресета на современном движке, каждый подогнан к своему референсу TSOHT по признакам (спектр относительно ноты, шумность, плотность, атака, длительность звучания, движение, стерео); референс указан в `Source/FactoryPresets.inc`. Все выровнены по громкости: true peak −1 dBTP на стандартной фразе.
 
 ## Сборка и проверки
 
