@@ -449,6 +449,34 @@ void testCharacter()
     }
 }
 
+// MORPH (the filter envelope moves the wavetable position and WARP) and LFO -> FM: modern movement inside a note.
+double centroidAt (const juce::AudioBuffer<float>& a, double t0)
+{
+    juce::dsp::FFT fft (10);
+    std::vector<float> buf (2048, 0.0f);
+    const int i0 = (int) (t0 * 48000);
+    for (int i = 0; i < 1024; ++i)
+        buf[(size_t) i] = 0.5f * (a.getSample (0, i0 + i) + a.getSample (1, i0 + i)) * (0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi * (float) i / 1024.0f));
+    fft.performFrequencyOnlyForwardTransform (buf.data());
+    double num = 0.0, den = 0.0;
+    for (int k = 1; k < 512; ++k) { const double pw = (double) buf[(size_t) k] * buf[(size_t) k]; num += pw * k * 48000.0 / 1024.0; den += pw; }
+    return den > 0.0 ? num / den : 0.0;
+}
+void testMovement()
+{
+    const std::vector<Note> held { { 0.0, 1.2, 57 } };
+    auto p = plain(); p.oscAShape = 5.0f; p.fltAttackMs = 1.0f; p.fltDecayMs = 200.0f; p.fltSustain = 0.0f;
+    auto m = p; m.morphEnv = 1.0f;
+    const auto a = render (p, held, 1.3), b = render (m, held, 1.3);
+    const double moveA = std::abs (std::log2 (centroidAt (a, 0.02) / centroidAt (a, 0.8))), moveB = std::abs (std::log2 (centroidAt (b, 0.02) / centroidAt (b, 0.8)));
+    expect (finite (b) && moveB > moveA + 0.3, "MORPH moves the timbre within the note (" + juce::String (moveA, 2) + " -> " + juce::String (moveB, 2) + " oct)");
+    auto f = plain(); f.oscAShape = 0.0f; f.fmAmount = 0.5f; f.oscBShape = 0.0f; f.lfoRateHz = 4.0f;
+    auto g = f; g.lfoTarget = LfoTarget::fm; g.lfoAmount = 1.0f;
+    auto spread = [] (const juce::AudioBuffer<float>& x) { double lo = 1e9, hi = 0; for (double t = 0.2; t < 1.0; t += 0.025) { const double c = centroidAt (x, t); lo = std::min (lo, c); hi = std::max (hi, c); } return std::log2 (hi / lo); };
+    const double sf = spread (render (f, held, 1.3)), sg = spread (render (g, held, 1.3));
+    expect (sg > sf + 0.3, "LFO -> FM moves the FM timbre (" + juce::String (sf, 2) + " -> " + juce::String (sg, 2) + " oct)");
+}
+
 void testCpu()
 {
     SynthParams p;
@@ -537,6 +565,7 @@ int main (int argc, char** argv)
     testTuningBendAndLfo();
     testAnalogue();
     testCharacter();
+    testMovement();
     testCpu();
     std::cout << (failures == 0 ? "PASS " : "FAILED ") << (checks - failures) << "/" << checks << " checks\n";
     return failures == 0 ? 0 : 1;

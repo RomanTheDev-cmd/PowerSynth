@@ -810,10 +810,11 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       fmAmount (p.state, ps::id::fmAmount, "FM", juce::String::fromUTF8 ("OSC B модулирует OSC A: от окраски до металла")),
       noise (p.state, ps::id::noise, "NOISE", juce::String::fromUTF8 ("Белый шум: воздух, фактура, атмосферы; через COMB — индустриальный металл")),
       cutoff (p.state, ps::id::cutoff, "CUTOFF", juce::String::fromUTF8 ("Частота фильтра (у COMB — яркость звона)")),
-      resonance (p.state, ps::id::resonance, "RESONANCE", juce::String::fromUTF8 ("Резонанс фильтра (у COMB — длина звона)")),
+      resonance (p.state, ps::id::resonance, "RES", juce::String::fromUTF8 ("Резонанс фильтра (у COMB — длина звона)")),
       fltEnv (p.state, ps::id::fltEnv, "ENV", juce::String::fromUTF8 ("Насколько огибающая открывает (+) или закрывает (−) фильтр")),
       fltDecay (p.state, ps::id::fltDecay, "F DECAY", juce::String::fromUTF8 ("Спад огибающей фильтра: короткий для плаков и acid")),
       grit (p.state, ps::id::grit, "GRIT", juce::String::fromUTF8 ("Перегруз на входе фильтра и между его ступенями: резонанс рычит и кричит (acid, screech)")),
+      morph (p.state, ps::id::morphEnv, "MORPH", juce::String::fromUTF8 ("Огибающая фильтра двигает форму волны (позицию в таблицах) и WARP: + «зап» и рык в начале ноты, − раскрытие к концу")),
       attack (p.state, ps::id::attack, "ATTACK", juce::String::fromUTF8 ("Атака громкости")),
       decay (p.state, ps::id::decay, "DECAY", juce::String::fromUTF8 ("Спад громкости")),
       sustain (p.state, ps::id::sustain, "SUSTAIN", juce::String::fromUTF8 ("Уровень удержания громкости")),
@@ -837,7 +838,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       voiceMode (p.state, ps::id::voiceMode, { "POLY", "MONO", "LEGATO" },
                  juce::String::fromUTF8 ("POLY — аккорды и пэды (8 голосов). MONO — один голос, каждая нота заново. LEGATO — один голос, нота, взятая до отпускания прежней, продолжает её (с GLIDE)")),
       lfoShape (p.state, ps::id::lfoShape, { "SIN", "TRI", "SAW", "SQR", "RND" }, juce::String::fromUTF8 ("Форма LFO")),
-      lfoTarget (p.state, ps::id::lfoTarget, { "PITCH", "CUTOFF", "SHAPE", "AMP" }, juce::String::fromUTF8 ("Что двигает LFO (SHAPE — форму и WARP)")),
+      lfoTarget (p.state, ps::id::lfoTarget, { "PITCH", "CUTOFF", "SHAPE", "AMP", "FM" }, juce::String::fromUTF8 ("Что двигает LFO: SHAPE — форму и WARP, FM — глубину FM (рык в темпе)")),
       lfoSync (p.state, ps::id::lfoSync, { "SYNC" }, juce::String::fromUTF8 ("Включено: LFO идёт в темпе проекта (DIV)")),
       warpMode (p.state, ps::id::warpMode, { "SYNC", "BEND", "PWM", "FOLD" }, juce::String::fromUTF8 ("Режим деформации OSC A")),
       advanced (p.state), browser (p)
@@ -845,12 +846,13 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     setLookAndFeel (&lnf);
     fltEnv.slider.getProperties().set ("bipolar", true);
     pitchEnv.slider.getProperties().set ("bipolar", true);
+    morph.slider.getProperties().set ("bipolar", true);
     for (auto* k : { &oscAShape, &oscBLevel, &cutoff, &lfoAmount, &drive, &master }) // one per block, and the output level
         k->setPrimary (true);
 
     for (auto* c : std::initializer_list<juce::Component*> {
              &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
-             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime,
+             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime,
              &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &master, &filterMode, &driveType,
              &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
@@ -1081,7 +1083,7 @@ void PowerSynthEditor::resized()
     auto flt = a[2];
     filterMode.setBounds (flt.removeFromTop (S (26)));
     flt.removeFromTop (S (8));
-    primaryAndGrid (flt, cutoff, { &resonance, &fltEnv, &fltDecay, &grit }, 2);
+    primaryAndGrid (flt, cutoff, { &resonance, &fltEnv, &morph, &fltDecay, &grit }, 3);
 
     const auto b = blocks (rowB, { "AMP", "LFO", "FX" }, false); // modulators and effects: no signal-flow arrows
     // AMP: the voice mode on top, the envelope, then glide and the pitch envelope.

@@ -65,7 +65,7 @@ const juce::StringArray& allParamIds()
                                          id::lfoAmount, id::driveType, id::drive, id::chorus, id::delayMix, id::delayTime, id::delayFb,
                                          id::reverbMix, id::reverbSize, id::voiceMode, id::glide, id::width, id::master, id::velSens,
                                          id::bendRange, id::oversample, id::analog, id::warpMode, id::warp, id::ring,
-                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift };
+                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv };
     return ids;
 }
 
@@ -102,7 +102,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     envelope (l, id::attack, id::decay, id::sustain, id::release, "", d.attackMs, d.decayMs, d.sustain, d.releaseMs);
 
     choice (l, id::lfoShape, "LFO Shape", { "Sine", "Triangle", "Saw", "Square", "Random" }, (int) d.lfoShape);
-    choice (l, id::lfoTarget, "LFO Target", { "Pitch", "Cutoff", "Shape", "Amp" }, (int) d.lfoTarget);
+    choice (l, id::lfoTarget, "LFO Target", { "Pitch", "Cutoff", "Shape", "Amp", "FM" }, (int) d.lfoTarget);
     flt (l, id::lfoRate, "LFO Rate", skewed (0.02f, 30.0f, 2.0f), d.lfoRateHz, [] (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; });
     l.add (std::make_unique<APB> (juce::ParameterID { id::lfoSync, 1 }, "LFO Sync", d.lfoSync));
     choice (l, id::lfoDiv, "LFO Division", divisionNames(), d.lfoDiv);
@@ -135,6 +135,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     unit (l, id::grit, "Grit", d.grit);
     unit (l, id::smash, "Smash", d.smash);
     unit (l, id::shift, "Shift", d.shift);
+    flt (l, id::morphEnv, "Morph Env", Range (-1.0f, 1.0f), d.morphEnv, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " %"; });
     return l;
 }
 
@@ -167,7 +168,7 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.sustain = get (id::sustain, p.sustain);
     p.releaseMs = get (id::release, p.releaseMs);
     p.lfoShape = (LfoShape) juce::jlimit (0, 4, i (id::lfoShape, (int) p.lfoShape));
-    p.lfoTarget = (LfoTarget) juce::jlimit (0, 3, i (id::lfoTarget, (int) p.lfoTarget));
+    p.lfoTarget = (LfoTarget) juce::jlimit (0, 4, i (id::lfoTarget, (int) p.lfoTarget));
     p.lfoRateHz = get (id::lfoRate, p.lfoRateHz);
     p.lfoSync = get (id::lfoSync, p.lfoSync ? 1.0f : 0.0f) > 0.5f;
     p.lfoDiv = juce::jlimit (0, numDivisions - 1, i (id::lfoDiv, p.lfoDiv));
@@ -196,6 +197,7 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.grit = get (id::grit, p.grit);
     p.smash = get (id::smash, p.smash);
     p.shift = get (id::shift, p.shift);
+    p.morphEnv = get (id::morphEnv, p.morphEnv);
     return p;
 }
 

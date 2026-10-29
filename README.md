@@ -12,15 +12,16 @@
 Отзыв Романа о 1.0: «никакущий… просто классический синтезатор… агрессии нет вообще и какого-то характера… обычные звуки аля муг вместо современных шранц и техно вещей». Движок 1.0 был классическим вычитающим (morph sine→square, чистый фильтр, мягкий перегруз на выходе). В 2.0 добавлено то, на чём строят современный hard techno и шранц:
 скрытые таблицы волн (9 форм), FM на них, деформация WARP (синк, изгиб, ШИМ-хувер, складывание), кольцевая модуляция, питч-огибающая, перегруз внутри фильтра (GRIT), гребёнка COMB, сдвиг частоты перед дисторшном (SHIFT) и OTT-подобное сжатие (SMASH). Все новые ручки по умолчанию выключены — проекты 1.x звучат как раньше.
 
-**Пресеты 2.0:** 70 новых (Leads: Screamer, Hard Supersaw, Industrial Lead, Screech Lead; Rave & Hoover: Hoover Dive, Rave Alarm, Metal Rave Line; Acid: Acid Scream; Pads: Grit Pad, Vox Pad, Industrial Pad; Atmospheres: Machine Air, Abyss Drone, Rhythmic Noise; Stabs: Schranz Shot, Rave Chord, Metal Shot, Screech Hit; Arps & Plucks: Hard Pluck, FM Metal Pluck, Table Arp — у каждого 3–5 вариантов). Библиотека 1.x (118) — категория **Classic**. Все выровнены по true peak −1 dBTP.
+**Пресеты 2.1 (2026-10-29):** по отзыву Романа на 2.0 («сделай нормальные современные примеры и классик удали… все звучит слишком классически») библиотека собрана заново, 71 пресет, без Classic: в основе таблицы, синк, ШИМ и FM на таблицах; движение внутри ноты (MORPH — огибающая двигает форму и WARP; LFO в темпе на SHAPE и FM); HP/BP/COMB вместо резонансного ФНЧ, жёсткий дисторшн, SMASH, SHIFT. Классическая синусоида — только как основа FM-колокола. Leads: Razor, Rave Saw Wall, FM Growl, Industrial Siren, Vox Scream; Rave & Hoover: Hoover 2000, Rave Signal X, Laser; Acid: Acid Razor; Pads: OTT Texture, Dark Choir Grit; Atmospheres: Machine Room, Distorted Abyss, Rhythmic Machine; Stabs: Schranz Shot X, Modern Rave Chord, Metal Impact, Zap Shot; Arps & Plucks: Zap Pluck, FM Bell Grit, Seq Growl — у каждого 2–5 вариантов. Все выровнены по true peak −1 dBTP.
+Новое в 2.1: **MORPH** (блок FILTER) — огибающая фильтра двигает форму волны и WARP; у LFO цель **FM**.
 
 ## Установка
 
-**Установщики** из папки `Установщики`: `PowerSynth-2.0.0-macOS.pkg` и `PowerSynth-2.0.0-Windows-x64-Setup.exe`.
+**Установщики** из папки `Установщики`: `PowerSynth-2.1.0-macOS.pkg` и `PowerSynth-2.1.0-Windows-x64-Setup.exe`.
 
 **macOS вручную** из `Сборки/macOS`: `PowerSynth.component` → `~/Library/Audio/Plug-Ins/Components/`, `PowerSynth.vst3` → `~/Library/Audio/Plug-Ins/VST3/`. На этом Mac плагин уже установлен. В Logic: AU Instruments → MyDarknessDays → PowerSynth (после перезапуска Logic).
 
-**Windows вручную:** папку `PowerSynth.vst3` из `Сборки/PowerSynth-2.0.0-Windows-x64.zip` целиком в `C:\Program Files\Common Files\VST3\`.
+**Windows вручную:** папку `PowerSynth.vst3` из `Сборки/PowerSynth-2.1.0-Windows-x64.zip` целиком в `C:\Program Files\Common Files\VST3\`.
 
 ## Регуляторы
 
@@ -30,7 +31,7 @@
 |---|---|---|
 | OSC A | SYNC / BEND / PWM / FOLD, **SHAPE**, UNISON, DETUNE, WARP, OCT, LEVEL, RING | SHAPE: SINE → TRI → SAW → SQUARE, дальше скрытые таблицы HOLLOW, VOX A, VOX O, GROWL, SCREECH, SYNC, BITTER, METAL, INDUST (плавный переход, без наложения частот на любой высоте). WARP деформирует волну: SYNC — крик жёсткого синка, BEND — медь изогнутой фазы, PWM — хувер, FOLD — металл складывания; LFO на SHAPE двигает и WARP. RING — кольцевая модуляция на OSC B. UNISON до 7 копий по стерео |
 | OSC B / NOISE | **LEVEL**, SHAPE, OCT, SEMI, FM, NOISE | Второй генератор с теми же формами и таблицами; FM — фазовая модуляция OSC A генератором B (с таблицами — современный металл); SEMI задаёт соотношение для FM и RING; FINE — в ADVANCED |
-| FILTER | LP24 / LP12 / BP / HP / COMB, **CUTOFF**, RESONANCE, ENV, F DECAY, GRIT | GRIT — перегруз на входе фильтра и между его ступенями: резонанс рычит (acid, screech). COMB — гребёнка по высоте ноты: металл и индустриальный звон (RESONANCE — длина звона, CUTOFF — яркость) |
+| FILTER | LP24 / LP12 / BP / HP / COMB, **CUTOFF**, RES, ENV, MORPH, F DECAY, GRIT | GRIT — перегруз на входе фильтра и между его ступенями: резонанс рычит (acid, screech). MORPH — огибающая фильтра двигает форму волны и WARP («зап», рык). COMB — гребёнка по высоте ноты: металл и индустриальный звон (RESONANCE — длина звона, CUTOFF — яркость) |
 | AMP | POLY / MONO / LEGATO, ATTACK, DECAY, SUSTAIN, RELEASE, GLIDE, PITCH, P.TIME | POLY — 8 голосов, отобранный гаснет за 3 мс. PITCH — сдвиг высоты в начале ноты (+ удар сверху для стэбов и шотов, − подъём снизу для хувера), P.TIME — за сколько он уходит |
 | LFO | SIN / TRI / SAW / SQR / RND, цель PITCH / CUTOFF / SHAPE / AMP, SYNC, **AMOUNT**, RATE, DIV | SYNC привязывает скорость к темпу проекта (DIV от 1/1 до 1/32, триоли, 1/8 с точкой) |
 | FX | SAT / CLIP / FOLD / CRUSH, **DRIVE**, CHORUS, DELAY, REVERB, WIDTH, SMASH, SHIFT | SHIFT — небольшой сдвиг частоты перед дисторшном (звук машины). SMASH — трёхполосное сжатие вверх и вниз в духе OTT: громкое прижимается, хвосты поднимаются — современная плотность. Затем хорус, пинг-понг дилей в темпе, реверберация |

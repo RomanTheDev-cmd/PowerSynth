@@ -383,7 +383,13 @@ public:
             if (p.pitchEnv != 0.0f) semis += p.pitchEnv * std::exp (-pitchAge * 3.0 / std::max (0.002, p.pitchTimeMs * 0.001));
             const double fBase = std::exp (logFreq) * std::exp2 (semis / 12.0 + ana * (noteCents + dM) / 1200.0);
             const double fA = fBase * aOct;
+            const double fe = flt.tick (p.fltAttackMs * 0.001, p.fltDecayMs * 0.001, p.fltSustain, p.fltReleaseMs * 0.001, sr);
             double shapeA = p.oscAShape, shapeB = p.oscBShape, warp = p.warp;
+            if (p.morphEnv != 0.0f)   // MORPH: the envelope moves the wavetable position and WARP (zaps, growls)
+            {
+                shapeA = juce::jlimit (0.0, (double) maxShape, shapeA + p.morphEnv * fe * 3.0);
+                warp = juce::jlimit (0.0, 1.0, warp + p.morphEnv * fe);
+            }
             if (p.lfoTarget == LfoTarget::shape)
             {
                 // a classic shape stays among the classic ones (sounds of 1.x unchanged), a table among the tables
@@ -395,7 +401,8 @@ public:
             const double incB = std::min (fBase * bRatio * std::exp2 (ana * noteCentsB / 1200.0) * dt, 0.45);
             phaseB += incB; phaseB -= std::floor (phaseB);
             const double b = shapeWave (phaseB, incB, shapeB);
-            const double pm = fmIdx * b / (2.0 * pi);
+            const double fmNow = p.lfoTarget == LfoTarget::fm ? fmIdx * std::max (0.0, 1.0 + lfo * p.lfoAmount) : fmIdx;
+            const double pm = fmNow * b / (2.0 * pi);
 
             double l = 0.0, r = 0.0;
             for (int k = 0; k < uni; ++k)
@@ -423,7 +430,6 @@ public:
             l += ana * (power_analog::warmDrive (l * 0.6) / 0.6 - l);
             r += ana * (power_analog::warmDrive (r * 0.6) / 0.6 - r);
 
-            const double fe = flt.tick (p.fltAttackMs * 0.001, p.fltDecayMs * 0.001, p.fltSustain, p.fltReleaseMs * 0.001, sr);
             if (--ctlCountdown <= 0)
             {
                 ctlCountdown = 16;
@@ -572,7 +578,7 @@ public:
         const int maxDelay = (int) (sr * 4.0) + 4;
         delayL.assign ((size_t) maxDelay, 0.0f);
         delayR.assign ((size_t) maxDelay, 0.0f);
-        dcL.set (8.0, sr); dcR.set (8.0, sr);
+        dcL.set (16.0, sr); dcR.set (16.0, sr);   // 16 Hz: the biased SAT on short notes leaves an envelope-shaped offset (2.1)
         sideHp.set (150.0, 0.707, sr);
         topL.set (8000.0, sr); topR.set (8000.0, sr);
         anaBlend.prepare (sr); anaBlendPost.prepare (sr);

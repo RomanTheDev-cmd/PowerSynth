@@ -68,6 +68,7 @@ namespace id
     inline constexpr const char* grit       = "grit";
     inline constexpr const char* smash      = "smash";
     inline constexpr const char* shift      = "shift";
+    inline constexpr const char* morphEnv   = "morphEnv";
 }
 
 enum class FilterMode { lp24, lp12, bp, hp, comb };
@@ -77,7 +78,7 @@ inline constexpr float maxShape = 12.0f;
 const juce::StringArray& shapeNames();
 enum class DriveType { saturate, clip, fold, crush };
 enum class LfoShape { sine, triangle, saw, square, random };
-enum class LfoTarget { pitch, cutoff, shape, amp };
+enum class LfoTarget { pitch, cutoff, shape, amp, fm };
 enum class VoiceMode { poly, mono, legato };
 
 // LFO / delay note values at the host tempo, in beats.
@@ -142,6 +143,7 @@ struct SynthParams
     float grit = 0.0f;            // drive into (and inside) the filter
     float smash = 0.0f;           // 3-band upward + downward compression (OTT-like density)
     float shift = 0.0f;           // a small frequency shift before the drive
+    float morphEnv = 0.0f;        // -1..1: the filter envelope moves SHAPE (3 positions at full) and WARP
     double bpm = 120.0;           // host tempo (not a parameter; set by the processor)
 };
 

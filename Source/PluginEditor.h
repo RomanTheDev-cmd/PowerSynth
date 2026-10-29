@@ -215,7 +215,7 @@ private:
 
     ps::ui::Knob oscAShape, unison, detune, oscAOct, oscALevel, warp, ring;
     ps::ui::Knob oscBLevel, oscBShape, oscBOct, oscBSemi, fmAmount, noise;
-    ps::ui::Knob cutoff, resonance, fltEnv, fltDecay, grit;
+    ps::ui::Knob cutoff, resonance, fltEnv, fltDecay, grit, morph;
     ps::ui::Knob attack, decay, sustain, release, glide, pitchEnv, pitchTime;
     ps::ui::Knob lfoAmount, lfoRate, lfoDiv;
     ps::ui::Knob drive, chorus, delayMix, reverbMix, width, smash, shift, master;
