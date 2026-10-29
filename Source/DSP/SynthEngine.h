@@ -236,7 +236,7 @@ struct Smash
                 // levelled towards -26 dBFS: loud parts down (up to 8:1), quiet parts up (up to 6:1, +30 dB), silence untouched
                 const double over = d + 26.0;
                 const double gainDb = over > 0.0 ? -over * (1.0 - 1.0 / (1.0 + 7.0 * amount))
-                                                 : std::min (30.0 * amount, -over * (1.0 - 1.0 / (1.0 + 5.0 * amount))) * juce::jlimit (0.0, 1.0, (d + 72.0) / 12.0);
+                                                 : std::min (30.0 * amount, -over * (1.0 - 1.0 / (1.0 + 5.0 * amount))) * juce::jlimit (0.0, 1.0, (d + 60.0) / 15.0);   // nothing below -60 dBFS is lifted: tails still die
                 const double g = std::pow (10.0, (gainDb + 8.0 * amount) / 20.0);
                 const double mix = 1.0 + amount * (g - 1.0);
                 out[0] += (float) (b[k][0] * mix); out[1] += (float) (b[k][1] * mix);
@@ -418,7 +418,8 @@ public:
             }
             l *= uniNorm * 1.41421356 * p.oscALevel; r *= uniNorm * 1.41421356 * p.oscALevel;
             if (p.ring > 0.0f) { const double rm = 1.0 + p.ring * (1.6 * b - 1.0); l *= rm; r *= rm; }   // A x B
-            if (warp > 0.0005)   // BEND and FOLD shift the mean: a 10 Hz DC blocker per voice (only with WARP: 1.x sounds unchanged)
+            if (p.warp > 0.0005f || p.morphEnv != 0.0f)   // BEND / FOLD shift the mean: a 10 Hz DC blocker per voice, on for the whole
+                                                           // sound (not switched by MORPH within a note); off for plain sounds
             {
                 const double k = 1.0 - 2.0 * pi * 10.0 / sr;
                 const double nl = l - dcX[0] + k * dcY[0], nr = r - dcX[1] + k * dcY[1];
@@ -578,7 +579,7 @@ public:
         const int maxDelay = (int) (sr * 4.0) + 4;
         delayL.assign ((size_t) maxDelay, 0.0f);
         delayR.assign ((size_t) maxDelay, 0.0f);
-        dcL.set (16.0, sr); dcR.set (16.0, sr);   // 16 Hz: the biased SAT on short notes leaves an envelope-shaped offset (2.1)
+        dcL.set (25.0, sr); dcR.set (25.0, sr);   // 25 Hz: the biased SAT on short notes and chords leaves an envelope-shaped offset (2.1, 2.2)
         sideHp.set (150.0, 0.707, sr);
         topL.set (8000.0, sr); topR.set (8000.0, sr);
         anaBlend.prepare (sr); anaBlendPost.prepare (sr);
@@ -744,7 +745,7 @@ private:
         const double v = x * g;
         switch (t)
         {
-            case DriveType::saturate: return std::tanh (v + 0.1) - std::tanh (0.1);
+            case DriveType::saturate: return std::tanh (v + 0.07) - std::tanh (0.07);   // a little even colour (0.1 left an offset on short chords, 2.2)
             case DriveType::clip:     return juce::jlimit (-1.0, 1.0, v);
             case DriveType::fold:     return std::sin (1.3 * v);
             case DriveType::crush:    return std::tanh (v);

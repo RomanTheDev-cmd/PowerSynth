@@ -120,7 +120,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     choice (l, id::voiceMode, "Voice Mode", { "Poly", "Mono", "Legato" }, (int) d.voiceMode);
     flt (l, id::glide, "Glide", skewed (0.0f, 2000.0f, 150.0f), d.glideMs, ms);
     unit (l, id::width, "Width", d.width);
-    flt (l, id::master, "Master", Range (-30.0f, 6.0f, 0.1f), d.masterDb, [] (float v, int) { return juce::String (v, 1) + " dB"; });
+    flt (l, id::master, "Master", Range (-30.0f, 12.0f, 0.1f), d.masterDb, [] (float v, int) { return juce::String (v, 1) + " dB"; });
     unit (l, id::velSens, "Velocity Sens", d.velSens);
     flt (l, id::bendRange, "Bend Range", Range (0.0f, 12.0f, 1.0f), d.bendRange, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " st"; });
     choice (l, id::oversample, "Oversampling", { "2x", "4x", "8x" }, d.oversampleIndex);

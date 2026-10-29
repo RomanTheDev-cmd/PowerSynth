@@ -64,7 +64,11 @@ void testPresets()
         bool same = p.getPresetName() == all[(size_t) i].name;
         for (const auto& [k, v] : all[(size_t) i].values)
             if (k != ps::id::oversample && k != ps::id::analog)
-                same = same && std::abs (plain (p, k.toRawUTF8()) - v) < 0.01f * std::max (1.0f, std::abs (v));
+            {
+                const bool ok = std::abs (plain (p, k.toRawUTF8()) - v) < 0.01f * std::max (1.0f, std::abs (v));
+                if (! ok) std::cout << "  " << all[(size_t) i].name << ": " << k << " = " << v << " loads as " << plain (p, k.toRawUTF8()) << "\n";
+                same = same && ok;
+            }
         ok += same ? 1 : 0;
     }
     expect (ok == (int) all.size(), "every factory preset loads its values (" + juce::String (ok) + " of " + juce::String ((int) all.size()) + ")");

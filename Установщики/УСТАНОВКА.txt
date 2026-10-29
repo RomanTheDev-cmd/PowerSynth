@@ -1,6 +1,6 @@
 PowerSynth 1.0.0 — установщики (MyDarknessDays)
 
-macOS 10.13 и новее на Intel, macOS 11 и новее на Apple silicon: PowerSynth-2.1.0-macOS.pkg
+macOS 10.13 и новее на Intel, macOS 11 и новее на Apple silicon: PowerSynth-2.2.0-macOS.pkg
   1. Дважды щёлкните по файлу. Установщик не подписан сертификатом Apple, поэтому macOS может сказать,
      что не может проверить разработчика. Тогда: Системные настройки → Конфиденциальность и безопасность →
      «Всё равно открыть» (или щелчок правой кнопкой по файлу → «Открыть»).
@@ -10,7 +10,7 @@ macOS 10.13 и новее на Intel, macOS 11 и новее на Apple silicon:
   Если PowerSynth уже стоял из папки «Сборки» в ~/Library/Audio/Plug-Ins, удалите те копии (в Корзину) — иначе DAW
   увидит два одинаковых плагина.
 
-Windows 10/11, 64 бита: PowerSynth-2.1.0-Windows-x64-Setup.exe
+Windows 10/11, 64 бита: PowerSynth-2.2.0-Windows-x64-Setup.exe
   1. Запустите. Установщик не подписан, поэтому Windows может показать «Система Windows защитила ваш компьютер»:
      «Подробнее» → «Выполнить в любом случае».
   2. Отметьте VST3 (C:\Program Files\Common Files\VST3) и/или отдельное приложение (C:\Program Files\MyDarknessDays\PowerSynth,

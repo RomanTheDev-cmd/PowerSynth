@@ -22,30 +22,34 @@ TESTS = os.environ.get("PS_TESTS", os.path.expanduser("~/Library/Caches/PowerSyn
 INC = os.path.join(HERE, "..", "Source", "FactoryPresets.inc")
 SR, LEN, FIT_MASTER = 48000, 4.0, -14.0
 ALLOC = {"Leads": 24, "Rave & Hoover": 12, "Acid": 8, "Pads": 10, "Atmospheres": 14, "Stabs": 16, "Arps & Plucks": 14}
-# name: (lo, hi, log-scale)
+# name: (lo, hi, log-scale). 2.2 (2026-10-29): the 2.x engine (wavetables, WARP, FM, RING, pitch, GRIT, SMASH, SHIFT,
+# MORPH) with modern floors: SMASH >= 0.3 and DRIVE >= 0.25 (Roman: no plain classic sounds).
 SPACE = {
-    "oscAShape": (0, 3, False), "detune": (0, 1, False), "oscALevel": (0.3, 1, False), "oscBShape": (0, 3, False),
+    "oscAShape": (0, 12, False), "detune": (0, 1, False), "oscALevel": (0.3, 1, False), "oscBShape": (0, 12, False),
     "oscBFine": (-50, 50, False), "oscBLevel": (0, 1, False), "noise": (0, 1, False), "fmAmount": (0, 1, False),
     "cutoff": (60, 18000, True), "resonance": (0, 0.95, False), "fltEnv": (-1, 1, False), "fltDecay": (10, 4000, True),
     "fltSustain": (0, 1, False), "attack": (0.5, 4000, True), "decay": (10, 6000, True), "sustain": (0, 1, False),
-    "release": (5, 4000, True), "drive": (0, 1, False), "chorus": (0, 1, False), "delayMix": (0, 0.6, False),
+    "release": (5, 4000, True), "drive": (0.25, 1, False), "chorus": (0, 1, False), "delayMix": (0, 0.6, False),
     "delayFb": (0, 0.6, False), "reverbMix": (0, 0.9, False), "reverbSize": (0, 1, False), "width": (0, 1, False),
     "lfoAmount": (0, 1, False), "lfoRate": (0.05, 12, True),
+    "warp": (0, 1, False), "ring": (0, 0.8, False), "pitchEnv": (-12, 36, False), "pitchTime": (5, 800, True),
+    "grit": (0, 1, False), "smash": (0.3, 1, False), "shift": (0, 0.6, False), "morphEnv": (-1, 1, False),
 }
 INTS = {"unison": (1, 7), "oscAOct": (-1, 1), "oscBOct": (-2, 2)}
 SEMIS = [0, 0, 0, 7, 12, -12, 5, 3, -5]
-CHOICES = {"filterMode": 4, "driveType": 4, "lfoShape": 5, "lfoTarget": 4, "delayTime": 9}
+CHOICES = {"filterMode": 5, "driveType": 4, "lfoShape": 5, "lfoTarget": 5, "delayTime": 9, "warpMode": 4, "lfoDiv": 9}
 # Usability limits per category (a lead must speak at once, a pad must swell).
 LIMITS = {"Leads": {"attack": (0.5, 40), "release": (5, 800)}, "Rave & Hoover": {"attack": (0.5, 60), "release": (5, 1500)},
           "Acid": {"attack": (0.5, 20), "release": (5, 300)}, "Pads": {"attack": (30, 4000)}, "Atmospheres": {},
           "Stabs": {"attack": (0.5, 15)}, "Arps & Plucks": {"attack": (0.5, 20), "release": (5, 800)}}
-FIXED = {"Acid": {"voiceMode": 2, "glide": 60}}
+FIXED = {}
 DEFAULTS = {"oscAShape": 2.0, "detune": 0.25, "oscALevel": 1.0, "oscBShape": 3.0, "oscBFine": 7.0, "oscBLevel": 0.4,
             "noise": 0.0, "fmAmount": 0.0, "cutoff": 3500, "resonance": 0.25, "fltEnv": 0.3, "fltDecay": 400,
-            "fltSustain": 0.3, "attack": 5, "decay": 600, "sustain": 0.8, "release": 250, "drive": 0.2, "chorus": 0.2,
+            "fltSustain": 0.3, "attack": 5, "decay": 600, "sustain": 0.8, "release": 250, "drive": 0.25, "chorus": 0.2,
             "delayMix": 0.0, "delayFb": 0.35, "reverbMix": 0.15, "reverbSize": 0.6, "width": 0.6, "lfoAmount": 0.0,
             "lfoRate": 2.0, "unison": 3, "oscAOct": 0, "oscBOct": 0, "oscBSemi": 0, "filterMode": 0, "driveType": 0,
-            "lfoShape": 0, "lfoTarget": 1, "delayTime": 3}
+            "lfoShape": 0, "lfoTarget": 1, "delayTime": 3, "warpMode": 0, "lfoDiv": 3, "warp": 0.0, "ring": 0.0,
+            "pitchEnv": 0.0, "pitchTime": 80.0, "grit": 0.0, "smash": 0.3, "shift": 0.0, "morphEnv": 0.0}
 
 
 def note_for(f0):
@@ -96,11 +100,13 @@ def from_unit(cat, k, u):
 
 
 def clamp(cat, p):
-    q = {**DEFAULTS, **{k: v for k, v in p.items() if k in DEFAULTS}}
+    q = {**DEFAULTS, **{k: v for k, v in p.items() if k != "master"}}
     for k in SPACE:
         q[k] = from_unit(cat, k, to_unit(cat, k, q[k]))
     for k, (lo, hi) in INTS.items():
         q[k] = int(min(max(round(q[k]), lo), hi))
+    if q["oscAShape"] < 3.5 and q["fmAmount"] < 0.3:   # a classic wave only with something modern on it
+        q["warp"] = max(q["warp"], 0.2)
     return q
 
 
@@ -125,7 +131,7 @@ def fit_one(job):
     rng = np.random.default_rng(seed)
     r = Renderer()
     root, phrase, bpm, rlen, alen = setup(ref)
-    fixed = {**FIXED.get(cat, {}), "lfoSync": 0, "master": FIT_MASTER}
+    fixed = {**FIXED.get(cat, {}), "master": FIT_MASTER}
     def cost(p):
         x = r.render({**p, **fixed}, root, phrase, bpm, rlen)[: int(alen * SR)]
         f = features(x, SR)
@@ -152,13 +158,14 @@ def fit_one(job):
             if c < bc:
                 best, bc, bparts = q, c, parts
     for k, n in list(CHOICES.items()) + [("unison", 0)]:
+        if k == "lfoDiv" and not best.get("lfoSync"): continue
         for v in (range(n) if n else range(1, 8)):
             q = dict(best); q[k] = v
             c, parts = cost(q)
             if c < bc:
                 best, bc, bparts = q, c, parts
     r.p.kill()
-    return {**best, **FIXED.get(cat, {})}, bc, bparts
+    return clamp(cat, {**best, **FIXED.get(cat, {})}), bc, bparts
 
 
 def kmedoids(fs, k, iters=30, seed=1):
@@ -228,7 +235,7 @@ def group_of(p):
 
 
 def lit(k, v):
-    if k in CHOICES or k in INTS or k in ("oscBSemi", "voiceMode"):
+    if k in CHOICES or k in INTS or k in ("oscBSemi", "voiceMode", "lfoSync"):
         return str(int(round(v)))
     t = "%.4g" % v
     return (t + ".0" if "." not in t and "e" not in t else t) + "f"
@@ -275,5 +282,82 @@ def audit():
         print("%-24s %-14s %6.2f  %s" % (name, cat, best[0], best[1]))
 
 
+def refit(out_path):
+    """Each preset of the current library is fitted to a reference of its own category: k-medoids (k = presets in the
+    category), presets assigned greedily to the nearest free medoid; distance before and after is reported."""
+    refs = pickle.load(open(os.path.join(HERE, "..", "Референсы", "synth_features.pkl"), "rb"))
+    lib = hand_presets()
+    r = Renderer()
+    jobs, meta = [], []
+    for cat in ALLOC:
+        mine = [e for e in lib if e["cat"] == cat]
+        if not mine: continue
+        pool = [x for x in refs if x["category"] == cat]
+        meds = [pool[i] for i in kmedoids([x["feat"] for x in pool], len(mine))]
+        D = []
+        for e in mine:
+            row = []
+            for ref in meds:
+                root, phrase, bpm, rlen, alen = setup(ref)
+                f = features(r.render({**clamp(cat, e["params"]), "master": FIT_MASTER}, root, phrase, bpm, rlen)[: int(alen * SR)], SR)
+                row.append(1e9 if f is None else distance(f, ref["feat"]))
+            D.append(row)
+        free = set(range(len(meds)))
+        order = sorted(range(len(mine)), key=lambda a: min(D[a]))
+        for a in order:
+            b = min(free, key=lambda j: D[a][j]); free.discard(b)
+            others = [x["params"] for x in mine if x is not mine[a]][:6]
+            jobs.append((meds[b], cat, [mine[a]["params"]] + others, 2000 + len(jobs), int(os.environ.get("FIT_ITERS", 60))))
+            meta.append((mine[a], meds[b], D[a][b]))
+    r.p.kill()
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=int(os.environ.get("FIT_WORKERS", 9))) as ex:
+        results = list(ex.map(fit_one, jobs, chunksize=1))
+    out = []
+    for (e, ref, before), (p, c, parts) in zip(meta, results):
+        out.append({"name": e["name"], "category": e["cat"], "target": ref["file"].split("/")[-1], "params": p, "before": before,
+                    "distance": c, "parts": parts})
+        print("%-24s %-14s %5.2f -> %5.2f  <- %s" % (e["name"], e["cat"], before, c, ref["file"].split("/")[-1]))
+    json.dump(out, open(out_path, "w"), indent=1, ensure_ascii=False)
+    b = sorted(o["before"] for o in out); a = sorted(o["distance"] for o in out)
+    print("median distance %.2f -> %.2f, %d presets in %.0f s" % (b[len(b) // 2], a[len(a) // 2], len(out), time.time() - t0))
+
+
+BEATS = [4, 2, 1, 0.5, 0.25, 0.125, 2 / 3, 1 / 3, 0.75]
+
+
+def finish(name, p):
+    """After fitting: PITCH on its 0.1 st grid; delay repeats gone within 12 s at 120 BPM (a 1/1 delay with feedback 0.6
+    rang for 27 s); headroom for two presets whose level needed more than MASTER +6 dB."""
+    p = dict(p)
+    p["pitchEnv"] = round(p.get("pitchEnv", 0.0), 1)
+    t = 0.5 * BEATS[int(round(p.get("delayTime", 3)))]
+    p["delayFb"] = min(p.get("delayFb", 0.35), 10 ** (-3.0 * t / 12.0))
+    if name == "Rave Signal X Shift":
+        p["oscALevel"] = 1.0; p["oscBLevel"] = 1.0; p["smash"] = min(1.0, p.get("smash", 0.3) + 0.1)
+    if name == "Rhythmic Machine Comb":
+        p.update(noise=1.0, oscALevel=1.0, resonance=0.55, smash=1.0, driveType=0, drive=0.7)
+    return p
+
+
+def apply_refit(fit_path):
+    fits = {f["name"]: f for f in json.load(open(fit_path))}
+    lines, n = [], 0
+    for line in open(INC, encoding="utf-8"):
+        m = ENTRY.match(line)
+        if m and m.group(1) in fits:
+            f = fits[m.group(1)]
+            p = finish(m.group(1), {k: v for k, v in f["params"].items() if k != "master"})
+            p["master"] = -12.0
+            body = ",".join('{"%s",%s}' % (k, lit(k, p[k])) for k in sorted(p))
+            line = '{ "%s", "%s", { %s }, "%s" }, // fit %.1f (was %.1f) to %s\n' % (m.group(1), m.group(2), body, m.group(4),
+                                                                                       f["distance"], f["before"], f["target"])
+            n += 1
+        lines.append(line)
+    open(INC, "w", encoding="utf-8").write("".join(lines))
+    print("refitted:", n)
+
+
 if __name__ == "__main__":
-    {"fit": lambda: fit(sys.argv[2]), "apply": lambda: apply(sys.argv[2]), "audit": audit}[sys.argv[1]]()
+    {"fit": lambda: fit(sys.argv[2]), "apply": lambda: apply(sys.argv[2]), "audit": audit, "refit": lambda: refit(sys.argv[2]),
+     "apply-refit": lambda: apply_refit(sys.argv[2])}[sys.argv[1]]()
