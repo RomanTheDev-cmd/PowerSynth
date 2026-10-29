@@ -183,7 +183,7 @@ public:
 
 private:
     Segment oversample;
-    Knob fltAttack, fltSustain, fltRelease, delayTime, delayFb, reverbSize, velSens, bend;
+    Knob fltAttack, fltSustain, fltRelease, delayTime, delayFb, reverbSize, velSens, bend, oscBFine;
 };
 }
 
@@ -213,13 +213,13 @@ private:
     juce::TextButton prevButton { "<" }, nextButton { ">" }, presetButton, saveButton { "SAVE" }, advancedButton { "ADVANCED" },
         menuButton { "..." }, previewButton { "PREVIEW" };
 
-    ps::ui::Knob oscAShape, unison, detune, oscAOct, oscALevel;
-    ps::ui::Knob oscBLevel, oscBShape, oscBOct, oscBSemi, oscBFine, fmAmount, noise;
-    ps::ui::Knob cutoff, resonance, fltEnv, fltDecay;
-    ps::ui::Knob attack, decay, sustain, release, glide;
+    ps::ui::Knob oscAShape, unison, detune, oscAOct, oscALevel, warp, ring;
+    ps::ui::Knob oscBLevel, oscBShape, oscBOct, oscBSemi, fmAmount, noise;
+    ps::ui::Knob cutoff, resonance, fltEnv, fltDecay, grit;
+    ps::ui::Knob attack, decay, sustain, release, glide, pitchEnv, pitchTime;
     ps::ui::Knob lfoAmount, lfoRate, lfoDiv;
-    ps::ui::Knob drive, chorus, delayMix, reverbMix, width, master;
-    ps::ui::Segment filterMode, driveType, voiceMode, lfoShape, lfoTarget, lfoSync;
+    ps::ui::Knob drive, chorus, delayMix, reverbMix, width, smash, shift, master;
+    ps::ui::Segment filterMode, driveType, voiceMode, lfoShape, lfoTarget, lfoSync, warpMode;
     std::unique_ptr<ps::ui::Segment> analogMode; // DIGITAL | ANALOGUE, in the header (2026-10-28)
     ps::ui::WaveformView waveform;
     std::atomic<bool> soundDirty { true };

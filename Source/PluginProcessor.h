@@ -53,7 +53,7 @@ public:
     std::atomic<bool> previewRequested { false };
 
 private:
-    juce::String presetName { "Power Lead" };
+    juce::String presetName { "Screamer I" }; // the first preset of the 2.0 library
     mutable juce::SpinLock nameLock;
     ps::dsp::SynthEngine engine;
     int reportedLatency = -1;

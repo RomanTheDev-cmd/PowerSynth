@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -123,6 +124,17 @@ double maxCurve (const juce::AudioBuffer<float>& a)
 
 // The phrases presets are judged and levelled on: a chord for pads, atmospheres and stabs, a line for the rest.
 bool chordCategory (const juce::String& c) { return c == "Pads" || c == "Atmospheres" || c == "Stabs"; }
+std::vector<Note> phraseFor (const juce::String& category);
+// The phrase of a preset: by its category; "Classic" (the 1.x library) by the sound itself (a slow attack plays a chord,
+// a short one-shot plays stabs, otherwise a line).
+std::vector<Note> phraseOf (const Preset& pr)
+{
+    if (pr.category != "Classic") return phraseFor (pr.category);
+    const auto p = paramsFromSnapshot (pr.values);
+    if (p.attackMs >= 200.0f) return phraseFor ("Pads");
+    if (p.sustain < 0.05f && p.decayMs < 600.0f && p.unison >= 3) return phraseFor ("Stabs");
+    return phraseFor ("Leads");
+}
 std::vector<Note> phraseFor (const juce::String& category)
 {
     if (category == "Stabs")
@@ -176,7 +188,7 @@ void testFactoryPresets()
     {
         expect (names.insert (pr.name).second, "unique preset name: " + pr.name);
         const auto p = paramsFromSnapshot (pr.values);
-        const auto a = render (p, phraseFor (pr.category), 3.5);
+        const auto a = render (p, phraseOf (pr), 3.5);
         const double pk = peak (a);
         expect (finite (a), pr.name + ": finite");
         expect (pk <= 1.0, pr.name + ": peak <= 0 dBFS (" + juce::String (db (pk), 2) + ")");
@@ -235,7 +247,7 @@ void testBlockSizesAndRates()
     for (int i : { 0, 4, 8, 11 })
     {
         const auto p = paramsFromSnapshot (f[(size_t) i].values);
-        const auto ph = phraseFor (f[(size_t) i].category);
+        const auto ph = phraseOf (f[(size_t) i]);
         const auto a = render (p, ph, 2.0, 48000.0, 512), b = render (p, ph, 2.0, 48000.0, 64);
         double d = 0.0, r = 0.0;
         for (int c = 0; c < 2; ++c)
@@ -305,16 +317,149 @@ void testAnalogue()
     expect (10.0 * std::log10 (diff / ref) > -25.0, "ANALOGUE changes the sound (" + juce::String (10.0 * std::log10 (diff / ref), 1) + " dB)");
 }
 
+//==============================================================================
+// 2.0 (2026-10-29): Roman - "the engine is weak, Moog-like sounds instead of modern schranz and techno". The new
+// blocks must audibly change the sound, stay band-limited, bounded and finite.
+double tonePower (const juce::AudioBuffer<float>& a, double hz, double t0, double t1)
+{
+    std::complex<double> acc {};
+    const int i0 = (int) (t0 * 48000), i1 = (int) (t1 * 48000);
+    for (int i = i0; i < i1; ++i) acc += (double) (a.getSample (0, i) + a.getSample (1, i)) * std::polar (1.0, -2.0 * juce::MathConstants<double>::pi * hz * i / 48000.0);
+    const double m = std::abs (acc) / (i1 - i0);
+    return m * m;
+}
+// Spectral centroid (Hz) of the mid signal, 0.2..0.6 s, from a 8192-point FFT.
+double centroid (const juce::AudioBuffer<float>& a, double t0 = 0.2)
+{
+    juce::dsp::FFT fft (13);
+    std::vector<float> buf (16384, 0.0f);
+    const int i0 = (int) (t0 * 48000);
+    for (int i = 0; i < 8192 && i0 + i < a.getNumSamples(); ++i)
+        buf[(size_t) i] = 0.5f * (a.getSample (0, i0 + i) + a.getSample (1, i0 + i)) * (0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi * (float) i / 8192.0f));
+    fft.performFrequencyOnlyForwardTransform (buf.data());
+    double num = 0.0, den = 0.0;
+    for (int k = 1; k < 4096; ++k) { const double pw = (double) buf[(size_t) k] * buf[(size_t) k]; num += pw * k * 48000.0 / 8192.0; den += pw; }
+    return den > 0.0 ? num / den : 0.0;
+}
+// Energy that is not at the harmonics of f0 (aliasing, inharmonic shift), relative to all, 0.2..1.0 s.
+double offHarmonic (const juce::AudioBuffer<float>& a, double f0)
+{
+    juce::dsp::FFT fft (15);
+    std::vector<float> buf (65536, 0.0f);
+    for (int i = 0; i < 32768; ++i)
+        buf[(size_t) i] = 0.5f * (a.getSample (0, 9600 + i) + a.getSample (1, 9600 + i)) * (0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi * (float) i / 32768.0f));
+    fft.performFrequencyOnlyForwardTransform (buf.data());
+    double off = 0.0, all = 0.0;
+    for (int k = 2; k < 16384; ++k)
+    {
+        const double hz = k * 48000.0 / 32768.0, pw = (double) buf[(size_t) k] * buf[(size_t) k];
+        all += pw;
+        const double h = hz / f0;
+        if (std::abs (h - std::round (h)) * f0 > 12.0) off += pw;
+    }
+    return all > 0.0 ? off / all : 0.0;
+}
+SynthParams plain()
+{
+    SynthParams p;
+    p.unison = 1; p.oscBLevel = 0.0f; p.chorus = 0.0f; p.reverbMix = 0.0f; p.drive = 0.0f; p.cutoffHz = 18000.0f; p.fltEnv = 0.0f;
+    p.resonance = 0.0f; p.sustain = 1.0f; p.width = 0.0f;
+    return p;
+}
+
+void testCharacter()
+{
+    const std::vector<Note> held { { 0.0, 1.2, 57 } };   // A3, 220 Hz
+    // Hidden wavetables: each of the 9 new shapes is its own timbre, finite and band-limited even high up.
+    std::vector<double> cents;
+    for (int sh = 4; sh <= 12; ++sh)
+    {
+        auto p = plain(); p.oscAShape = (float) sh;
+        const auto a = render (p, held, 1.3);
+        const auto hi = render (p, { { 0.0, 1.2, 93 } }, 1.3);   // A6, 1760 Hz
+        expect (finite (a) && peak (a) > 0.05 && peak (a) <= 1.0, "wavetable " + shapeNames()[sh] + " plays");
+        expect (offHarmonic (hi, 1760.0) < 0.003, "wavetable " + shapeNames()[sh] + " band-limited at 1760 Hz (aliasing "
+                + juce::String (100.0 * offHarmonic (hi, 1760.0), 3) + " %)");
+        cents.push_back (centroid (a));
+    }
+    int close = 0;
+    for (size_t i = 0; i < cents.size(); ++i)
+        for (size_t j = i + 1; j < cents.size(); ++j)
+            close += std::abs (std::log2 (cents[i] / cents[j])) < 0.04 ? 1 : 0;
+    expect (close <= 2, "the wavetables differ in colour (" + juce::String (close) + " pairs alike)");
+    // WARP: every mode moves the spectrum, the PWM hoover too.
+    auto base = plain(); base.oscAShape = 2.0f;
+    const double c0 = centroid (render (base, held, 1.3));
+    for (int m = 0; m < 4; ++m)
+    {
+        auto p = base; p.warpMode = (WarpMode) m; p.warp = 0.7f;
+        const auto a = render (p, held, 1.3);
+        const double c = centroid (a);
+        expect (finite (a) && peak (a) <= 1.0 && std::abs (std::log2 (c / c0)) > 0.15, "WARP " + juce::String (m) + " changes the timbre (centroid "
+                + juce::String (c0, 0) + " -> " + juce::String (c, 0) + " Hz)");
+    }
+    // RING: sidebands at fA +- fB (B a fifth up: 330 Hz -> 110 and 550 Hz).
+    {
+        auto p = plain(); p.oscAShape = 0.0f; p.oscBShape = 0.0f; p.oscBSemi = 7; p.oscBFine = 0.0f;
+        auto r = p; r.ring = 1.0f;
+        const auto a = render (p, held, 1.3), b = render (r, held, 1.3);
+        const double f2 = 220.0 * std::exp2 (7.0 / 12.0);
+        expect (tonePower (b, f2 + 220.0, 0.2, 1.0) > 100.0 * tonePower (a, f2 + 220.0, 0.2, 1.0) && tonePower (b, f2 - 220.0, 0.2, 1.0) > 1.0e-6,
+                "RING makes sum and difference tones");
+    }
+    // Pitch envelope: +12 st at the start, back at the note after P.TIME.
+    {
+        auto p = plain(); p.oscAShape = 0.0f; p.pitchEnv = 12.0f; p.pitchTimeMs = 200.0f;
+        const auto a = render (p, held, 1.3);
+        const double early = pitchHz (a, 0.002, 0.012), late = pitchHz (a, 0.6, 0.9);
+        expect (early > 370.0 && std::abs (late - 220.0) < 2.0, "PITCH env dives from " + juce::String (early, 0) + " Hz to " + juce::String (late, 1) + " Hz");
+    }
+    // GRIT: the filter growls (more harmonics) and stays bounded with full resonance.
+    {
+        auto p = plain(); p.oscAShape = 0.0f; p.cutoffHz = 900.0f; p.resonance = 0.9f;
+        auto g = p; g.grit = 1.0f;
+        const auto a = render (p, held, 1.3), b = render (g, held, 1.3);
+        const double h3a = tonePower (a, 660.0, 0.2, 1.0) / tonePower (a, 220.0, 0.2, 1.0), h3b = tonePower (b, 660.0, 0.2, 1.0) / tonePower (b, 220.0, 0.2, 1.0);
+        expect (finite (b) && peak (b) <= 1.0 && h3b > 10.0 * h3a, "GRIT adds harmonics in the filter (3rd " + juce::String (db (std::sqrt (h3a)), 1) + " -> "
+                + juce::String (db (std::sqrt (h3b)), 1) + " dB)");
+    }
+    // COMB: noise through the comb rings at the note (peaks at 220 Hz multiples).
+    {
+        auto p = plain(); p.oscALevel = 0.0f; p.noise = 1.0f; p.filterMode = FilterMode::comb; p.resonance = 0.9f; p.cutoffHz = 8000.0f;
+        const auto a = render (p, held, 1.3);
+        const double on = tonePower (a, 440.0, 0.2, 1.0), offPk = tonePower (a, 550.0, 0.2, 1.0);
+        expect (finite (a) && peak (a) <= 1.0 && on > 8.0 * offPk, "COMB rings at the note (" + juce::String (db (std::sqrt (on / offPk)), 1) + " dB on/off)");
+    }
+    // SMASH: denser (lower crest factor) on plucks.
+    {
+        auto p = plain(); p.sustain = 0.0f; p.decayMs = 300.0f; p.oscAShape = 2.0f;
+        std::vector<Note> plucks;
+        for (int k = 0; k < 6; ++k) plucks.push_back ({ k * 0.25, k * 0.25 + 0.2, 57 });
+        auto sm = p; sm.smash = 1.0f;
+        const auto a = render (p, plucks, 1.6), b = render (sm, plucks, 1.6);
+        const double ca = db (peak (a) / rms (a)), cb = db (peak (b) / rms (b));
+        expect (finite (b) && cb < ca - 2.0, "SMASH makes it denser (crest " + juce::String (ca, 1) + " -> " + juce::String (cb, 1) + " dB; peak " + juce::String (db (peak (a)), 1) + " -> " + juce::String (db (peak (b)), 1) + ", rms " + juce::String (db (rms (a)), 1) + " -> " + juce::String (db (rms (b)), 1) + ")");
+    }
+    // SHIFT: a small frequency shift makes the partials inharmonic.
+    {
+        auto p = plain(); p.oscAShape = 2.0f;
+        auto s2 = p; s2.shift = 0.6f; s2.drive = 0.3f;
+        expect (offHarmonic (render (s2, held, 1.3), 220.0) > 0.2, "SHIFT moves the partials off the harmonics ("
+                + juce::String (100.0 * offHarmonic (render (s2, held, 1.3), 220.0), 1) + " %)");
+    }
+}
+
 void testCpu()
 {
     SynthParams p;
     p.unison = 7; p.drive = 0.6f; p.chorus = 0.5f; p.delayMix = 0.3f; p.reverbMix = 0.4f; p.oversampleIndex = 2; p.analog = true;
+    p.oscAShape = 8.5f; p.oscBShape = 11.0f; p.warp = 0.7f; p.ring = 0.5f; p.grit = 0.7f; p.smash = 0.8f; p.shift = 0.4f; p.fmAmount = 0.4f; p.pitchEnv = 12.0f;
     std::vector<Note> chord;
     for (int k = 0; k < 8; ++k) chord.push_back ({ 0.0, 4.0, 48 + 2 * k });
     const auto t0 = std::chrono::steady_clock::now();
     const auto a = render (p, chord, 4.0, 48000.0, 64);
     const double sec = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
-    std::cout << "  CPU: 8 voices x 7 unison, 8x drive, all effects, ANALOGUE: " << juce::String (100.0 * sec / 4.0, 1) << " % of real time\n";
+    std::cout << "  CPU: 8 voices x 7 unison, wavetables, SYNC, RING, GRIT, FM, 8x drive, SHIFT, SMASH, all effects, ANALOGUE: " << juce::String (100.0 * sec / 4.0, 1) << " % of real time\n";
     expect (finite (a) && sec / 4.0 < 0.5, "the heaviest setting runs at least twice faster than real time");
 }
 }
@@ -379,7 +524,7 @@ int main (int argc, char** argv)
             for (int pass = 0; pass < 2; ++pass)
             {
                 p.masterDb = (float) m;
-                m += -1.0 - db (truePeak (render (p, phraseFor (pr.category), 3.5)));
+                m += -1.0 - db (truePeak (render (p, phraseOf (pr), 3.5)));
             }
             std::cout << pr.name << "|" << juce::String (std::floor (m * 10.0) / 10.0, 1) << "\n";
         }
@@ -391,6 +536,7 @@ int main (int argc, char** argv)
     testBlockSizesAndRates();
     testTuningBendAndLfo();
     testAnalogue();
+    testCharacter();
     testCpu();
     std::cout << (failures == 0 ? "PASS " : "FAILED ") << (checks - failures) << "/" << checks << " checks\n";
     return failures == 0 ? 0 : 1;

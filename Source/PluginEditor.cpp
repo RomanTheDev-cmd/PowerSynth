@@ -225,7 +225,7 @@ void Segment::handleAsyncUpdate()
 //==============================================================================
 WaveformView::WaveformView()
 {
-    setTooltip ("Click to hear the sound (the C1 note PREVIEW plays)");
+    setTooltip (juce::String::fromUTF8 ("Щелчок — прослушать звук (нота PREVIEW)"));
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -344,18 +344,19 @@ void Meter::paint (juce::Graphics& g)
 
 //==============================================================================
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s)
-    : oversample (s, ps::id::oversample, { "2x", "4x", "8x" }, "Oversampling of the drive: higher = cleaner top, more CPU"),
-      fltAttack (s, ps::id::fltAttack, "F ATTACK", "Filter envelope attack"),
-      fltSustain (s, ps::id::fltSustain, "F SUSTAIN", "Filter envelope sustain"),
-      fltRelease (s, ps::id::fltRelease, "F RELEASE", "Filter envelope release"),
-      delayTime (s, ps::id::delayTime, "DLY TIME", "Delay time as a note value at the host tempo"),
-      delayFb (s, ps::id::delayFb, "FEEDBACK", "Delay repeats"),
-      reverbSize (s, ps::id::reverbSize, "SIZE", "Reverb size"),
-      velSens (s, ps::id::velSens, "VELOCITY", "How much note velocity changes the level"),
-      bend (s, ps::id::bendRange, "BEND", "Pitch-bend range in semitones")
+    : oversample (s, ps::id::oversample, { "2x", "4x", "8x" }, juce::String::fromUTF8 ("Передискретизация дисторшна: выше — чище верх, больше нагрузка")),
+      fltAttack (s, ps::id::fltAttack, "F ATTACK", juce::String::fromUTF8 ("Атака огибающей фильтра")),
+      fltSustain (s, ps::id::fltSustain, "F SUSTAIN", juce::String::fromUTF8 ("Удержание огибающей фильтра")),
+      fltRelease (s, ps::id::fltRelease, "F RELEASE", juce::String::fromUTF8 ("Затухание огибающей фильтра")),
+      delayTime (s, ps::id::delayTime, "DLY TIME", juce::String::fromUTF8 ("Время дилея в долях такта")),
+      delayFb (s, ps::id::delayFb, "FEEDBACK", juce::String::fromUTF8 ("Повторы дилея")),
+      reverbSize (s, ps::id::reverbSize, "SIZE", juce::String::fromUTF8 ("Размер реверберации")),
+      velSens (s, ps::id::velSens, "VELOCITY", juce::String::fromUTF8 ("Насколько сила нажатия меняет громкость")),
+      bend (s, ps::id::bendRange, "BEND", juce::String::fromUTF8 ("Диапазон питч-бенда в полутонах")),
+      oscBFine (s, ps::id::oscBFine, "B FINE", juce::String::fromUTF8 ("Тонкая подстройка OSC B в центах (биения, ширина)"))
 {
     for (auto* c : std::initializer_list<juce::Component*> { &oversample, &fltAttack, &fltSustain, &fltRelease, &delayTime, &delayFb,
-                                                             &reverbSize, &velSens, &bend })
+                                                             &reverbSize, &velSens, &bend, &oscBFine })
         addAndMakeVisible (c);
 }
 
@@ -383,9 +384,9 @@ void AdvancedPanel::resized()
     auto S = [s] (float v) { return juce::roundToInt (v * s); };
     oversample.setBounds (S (14), S (50), S (160), S (26));
     auto r = getLocalBounds().withTrimmedLeft (S (190)).reduced (S (6), S (24));
-    const int rowH = r.getHeight() / 2, w = r.getWidth() / 4;
+    const int rowH = r.getHeight() / 2, w = r.getWidth() / 5;
     auto top = r.removeFromTop (rowH), bottom = r;
-    for (auto* k : { &fltAttack, &fltSustain, &fltRelease, &velSens }) k->setBounds (top.removeFromLeft (w));
+    for (auto* k : { &fltAttack, &fltSustain, &fltRelease, &velSens, &oscBFine }) k->setBounds (top.removeFromLeft (w));
     for (auto* k : { &delayTime, &delayFb, &reverbSize, &bend }) k->setBounds (bottom.removeFromLeft (w));
 }
 
@@ -409,7 +410,7 @@ PresetBrowser::PresetBrowser (PowerSynthProcessor& p) : proc (p)
     setWantsKeyboardFocus (true);
     search.setTextToShowWhenEmpty ("Search presets", colours::dim);
     search.setJustification (juce::Justification::centredLeft);
-    search.setTooltip ("Type words of a name, a genre or a sound type");
+    search.setTooltip (juce::String::fromUTF8 ("Слова из названия, категории или типа звука"));
     search.onTextChange = [this] { refilter(); };
     search.onReturnKey = [this] { close(); };
     search.onEscapeKey = [this] { close(); };
@@ -419,10 +420,10 @@ PresetBrowser::PresetBrowser (PowerSynthProcessor& p) : proc (p)
     };
     auditionButton.setClickingTogglesState (true);
     auditionButton.setToggleState (true, juce::dontSendNotification);
-    auditionButton.setTooltip ("Play each preset as you choose it");
-    closeButton.setTooltip ("Back to the controls (Enter or Escape)");
+    auditionButton.setTooltip (juce::String::fromUTF8 ("Проигрывать каждый пресет при выборе"));
+    closeButton.setTooltip (juce::String::fromUTF8 ("Назад к ручкам (Enter или Esc)"));
     closeButton.onClick = [this] { close(); };
-    allTypesButton.setTooltip ("Show every sound type");
+    allTypesButton.setTooltip (juce::String::fromUTF8 ("Показать все типы звука"));
     allTypesButton.onClick = [this] { selectedGroups.clear(); refilter(); };
     list.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
     list.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
@@ -486,7 +487,7 @@ void PresetBrowser::rebuildGroups()
     for (const auto& g : groupNames)
     {
         auto* b = groupButtons.add (new juce::TextButton());
-        b->setTooltip ("Show " + g + " sounds; several types can be on together");
+        b->setTooltip (juce::String::fromUTF8 ("Показать звуки типа ") + g + juce::String::fromUTF8 ("; можно включить несколько"));
         b->onClick = [this, g] { toggleGroup (g); };
         addAndMakeVisible (b);
     }
@@ -795,55 +796,63 @@ void PresetBrowser::Categories::mouseDown (const juce::MouseEvent& e)
 //==============================================================================
 PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     : AudioProcessorEditor (p), proc (p),
-      oscAShape (p.state, ps::id::oscAShape, "SHAPE", "OSC A waveform: sine, triangle, saw, square, with smooth morphing"),
-      unison (p.state, ps::id::unison, "UNISON", "Voices of OSC A, spread across the stereo field (supersaw, hoover)"),
-      detune (p.state, ps::id::detune, "DETUNE", "How far the unison voices spread in pitch"),
-      oscAOct (p.state, ps::id::oscAOct, "OCT", "OSC A octave"),
-      oscALevel (p.state, ps::id::oscALevel, "LEVEL", "OSC A level"),
-      oscBLevel (p.state, ps::id::oscBLevel, "LEVEL", "OSC B level (it also drives FM, even at level 0)"),
-      oscBShape (p.state, ps::id::oscBShape, "SHAPE", "OSC B waveform"),
-      oscBOct (p.state, ps::id::oscBOct, "OCT", "OSC B octave"),
-      oscBSemi (p.state, ps::id::oscBSemi, "SEMI", "OSC B interval in semitones: fifths, octaves, chords"),
-      oscBFine (p.state, ps::id::oscBFine, "FINE", "OSC B fine tune in cents"),
-      fmAmount (p.state, ps::id::fmAmount, "FM", "OSC B modulates OSC A: from colour to metal"),
-      noise (p.state, ps::id::noise, "NOISE", "White noise: air, texture, atmospheres"),
-      cutoff (p.state, ps::id::cutoff, "CUTOFF", "Filter frequency"),
-      resonance (p.state, ps::id::resonance, "RESONANCE", "Filter resonance"),
-      fltEnv (p.state, ps::id::fltEnv, "ENV", "How far the filter envelope opens (+) or closes (-) the filter"),
-      fltDecay (p.state, ps::id::fltDecay, "F DECAY", "Filter envelope decay: short for plucks and acid"),
-      attack (p.state, ps::id::attack, "ATTACK", "Amp envelope attack"),
-      decay (p.state, ps::id::decay, "DECAY", "Amp envelope decay"),
-      sustain (p.state, ps::id::sustain, "SUSTAIN", "Amp envelope sustain level"),
-      release (p.state, ps::id::release, "RELEASE", "Amp envelope release"),
-      glide (p.state, ps::id::glide, "GLIDE", "Portamento time"),
-      lfoAmount (p.state, ps::id::lfoAmount, "AMOUNT", "LFO depth on the chosen target"),
-      lfoRate (p.state, ps::id::lfoRate, "RATE", "LFO speed in Hz (when SYNC is off)"),
-      lfoDiv (p.state, ps::id::lfoDiv, "DIV", "LFO note value at the host tempo (when SYNC is on)"),
-      drive (p.state, ps::id::drive, "DRIVE", "Distortion after the voices, oversampled"),
-      chorus (p.state, ps::id::chorus, "CHORUS", "Ensemble width and movement"),
-      delayMix (p.state, ps::id::delayMix, "DELAY", "Ping-pong delay at the host tempo (time and feedback in ADVANCED)"),
-      reverbMix (p.state, ps::id::reverbMix, "REVERB", "Reverb amount (size in ADVANCED)"),
-      width (p.state, ps::id::width, "WIDTH", "Stereo width; below 150 Hz stays mono"),
-      master (p.state, ps::id::master, "MASTER", "Output level"),
-      filterMode (p.state, ps::id::filterMode, { "LP24", "LP12", "BP", "HP" }, "Filter mode"),
-      driveType (p.state, ps::id::driveType, { "SAT", "CLIP", "FOLD", "CRUSH" }, "Distortion algorithm"),
+      oscAShape (p.state, ps::id::oscAShape, "SHAPE", juce::String::fromUTF8 ("Форма OSC A: SINE, TRI, SAW, SQUARE, дальше скрытые таблицы — HOLLOW, VOX A, VOX O, GROWL, SCREECH, SYNC, BITTER, METAL, INDUST; между ними плавный переход")),
+      unison (p.state, ps::id::unison, "UNISON", juce::String::fromUTF8 ("Сколько копий OSC A, разведённых по стерео (суперпила, хувер)")),
+      detune (p.state, ps::id::detune, "DETUNE", juce::String::fromUTF8 ("Насколько копии унисона расстроены друг от друга")),
+      oscAOct (p.state, ps::id::oscAOct, "OCT", juce::String::fromUTF8 ("Октава OSC A")),
+      oscALevel (p.state, ps::id::oscALevel, "LEVEL", juce::String::fromUTF8 ("Громкость OSC A")),
+      warp (p.state, ps::id::warp, "WARP", juce::String::fromUTF8 ("Деформация OSC A (режим над ручками): SYNC — крик жёсткого синка, BEND — медь изогнутой фазы, PWM — хувер, FOLD — металл складывания. LFO на SHAPE двигает и WARP")),
+      ring (p.state, ps::id::ring, "RING", juce::String::fromUTF8 ("Кольцевая модуляция OSC A на OSC B: звон, металл, нетональные призвуки (интервал задаёт SEMI у OSC B)")),
+      oscBLevel (p.state, ps::id::oscBLevel, "LEVEL", juce::String::fromUTF8 ("Громкость OSC B (FM и RING работают и при нуле)")),
+      oscBShape (p.state, ps::id::oscBShape, "SHAPE", juce::String::fromUTF8 ("Форма OSC B — те же формы и таблицы, что у OSC A; с FM даёт современный металл")),
+      oscBOct (p.state, ps::id::oscBOct, "OCT", juce::String::fromUTF8 ("Октава OSC B")),
+      oscBSemi (p.state, ps::id::oscBSemi, "SEMI", juce::String::fromUTF8 ("Интервал OSC B в полутонах: квинты, октавы, аккорды; для FM и RING — соотношение частот")),
+      fmAmount (p.state, ps::id::fmAmount, "FM", juce::String::fromUTF8 ("OSC B модулирует OSC A: от окраски до металла")),
+      noise (p.state, ps::id::noise, "NOISE", juce::String::fromUTF8 ("Белый шум: воздух, фактура, атмосферы; через COMB — индустриальный металл")),
+      cutoff (p.state, ps::id::cutoff, "CUTOFF", juce::String::fromUTF8 ("Частота фильтра (у COMB — яркость звона)")),
+      resonance (p.state, ps::id::resonance, "RESONANCE", juce::String::fromUTF8 ("Резонанс фильтра (у COMB — длина звона)")),
+      fltEnv (p.state, ps::id::fltEnv, "ENV", juce::String::fromUTF8 ("Насколько огибающая открывает (+) или закрывает (−) фильтр")),
+      fltDecay (p.state, ps::id::fltDecay, "F DECAY", juce::String::fromUTF8 ("Спад огибающей фильтра: короткий для плаков и acid")),
+      grit (p.state, ps::id::grit, "GRIT", juce::String::fromUTF8 ("Перегруз на входе фильтра и между его ступенями: резонанс рычит и кричит (acid, screech)")),
+      attack (p.state, ps::id::attack, "ATTACK", juce::String::fromUTF8 ("Атака громкости")),
+      decay (p.state, ps::id::decay, "DECAY", juce::String::fromUTF8 ("Спад громкости")),
+      sustain (p.state, ps::id::sustain, "SUSTAIN", juce::String::fromUTF8 ("Уровень удержания громкости")),
+      release (p.state, ps::id::release, "RELEASE", juce::String::fromUTF8 ("Затухание после отпускания")),
+      glide (p.state, ps::id::glide, "GLIDE", juce::String::fromUTF8 ("Скольжение высоты между нотами")),
+      pitchEnv (p.state, ps::id::pitchEnv, "PITCH", juce::String::fromUTF8 ("Сдвиг высоты в начале ноты, в полутонах: + удар сверху (стэбы, шоты), − подъём снизу (хувер)")),
+      pitchTime (p.state, ps::id::pitchTime, "P.TIME", juce::String::fromUTF8 ("За сколько высота возвращается к ноте")),
+      lfoAmount (p.state, ps::id::lfoAmount, "AMOUNT", juce::String::fromUTF8 ("Глубина LFO на выбранной цели")),
+      lfoRate (p.state, ps::id::lfoRate, "RATE", juce::String::fromUTF8 ("Скорость LFO в герцах (когда SYNC выключен)")),
+      lfoDiv (p.state, ps::id::lfoDiv, "DIV", juce::String::fromUTF8 ("Длительность периода LFO в долях такта (когда SYNC включён)")),
+      drive (p.state, ps::id::drive, "DRIVE", juce::String::fromUTF8 ("Дисторшн после голосов, с передискретизацией")),
+      chorus (p.state, ps::id::chorus, "CHORUS", juce::String::fromUTF8 ("Ширина и движение ансамбля")),
+      delayMix (p.state, ps::id::delayMix, "DELAY", juce::String::fromUTF8 ("Пинг-понг дилей в темпе проекта (время и повторы — в ADVANCED)")),
+      reverbMix (p.state, ps::id::reverbMix, "REVERB", juce::String::fromUTF8 ("Реверберация (размер — в ADVANCED)")),
+      width (p.state, ps::id::width, "WIDTH", juce::String::fromUTF8 ("Ширина стерео; ниже 150 Гц остаётся моно")),
+      smash (p.state, ps::id::smash, "SMASH", juce::String::fromUTF8 ("Трёхполосное сжатие вверх и вниз в духе OTT: громкое прижимается, хвосты и детали поднимаются — современная плотность")),
+      shift (p.state, ps::id::shift, "SHIFT", juce::String::fromUTF8 ("Небольшой сдвиг частоты перед дисторшном: призвуки становятся нетональными — звук машины, а не плагина")),
+      master (p.state, ps::id::master, "MASTER", juce::String::fromUTF8 ("Громкость на выходе")),
+      filterMode (p.state, ps::id::filterMode, { "LP24", "LP12", "BP", "HP", "COMB" }, juce::String::fromUTF8 ("Режим фильтра; COMB — гребёнка по высоте ноты: металл и индустриальный звон")),
+      driveType (p.state, ps::id::driveType, { "SAT", "CLIP", "FOLD", "CRUSH" }, juce::String::fromUTF8 ("Тип дисторшна")),
       voiceMode (p.state, ps::id::voiceMode, { "POLY", "MONO", "LEGATO" },
-                 "POLY: chords and pads (8 voices). MONO: one voice, every note restarts the envelopes. "
-                 "LEGATO: one voice, a note played before the previous one is released slides on (with GLIDE)"),
-      lfoShape (p.state, ps::id::lfoShape, { "SIN", "TRI", "SAW", "SQR", "RND" }, "LFO waveform"),
-      lfoTarget (p.state, ps::id::lfoTarget, { "PITCH", "CUTOFF", "SHAPE", "AMP" }, "What the LFO moves"),
-      lfoSync (p.state, ps::id::lfoSync, { "SYNC" }, "On: the LFO follows the host tempo (DIV)"),
+                 juce::String::fromUTF8 ("POLY — аккорды и пэды (8 голосов). MONO — один голос, каждая нота заново. LEGATO — один голос, нота, взятая до отпускания прежней, продолжает её (с GLIDE)")),
+      lfoShape (p.state, ps::id::lfoShape, { "SIN", "TRI", "SAW", "SQR", "RND" }, juce::String::fromUTF8 ("Форма LFO")),
+      lfoTarget (p.state, ps::id::lfoTarget, { "PITCH", "CUTOFF", "SHAPE", "AMP" }, juce::String::fromUTF8 ("Что двигает LFO (SHAPE — форму и WARP)")),
+      lfoSync (p.state, ps::id::lfoSync, { "SYNC" }, juce::String::fromUTF8 ("Включено: LFO идёт в темпе проекта (DIV)")),
+      warpMode (p.state, ps::id::warpMode, { "SYNC", "BEND", "PWM", "FOLD" }, juce::String::fromUTF8 ("Режим деформации OSC A")),
       advanced (p.state), browser (p)
 {
     setLookAndFeel (&lnf);
     fltEnv.slider.getProperties().set ("bipolar", true);
+    pitchEnv.slider.getProperties().set ("bipolar", true);
     for (auto* k : { &oscAShape, &oscBLevel, &cutoff, &lfoAmount, &drive, &master }) // one per block, and the output level
         k->setPrimary (true);
 
     for (auto* c : std::initializer_list<juce::Component*> {
-             &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &oscBFine, &fmAmount,
-             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &attack, &decay, &sustain, &release, &glide, &lfoAmount, &lfoRate, &lfoDiv,
-             &drive, &chorus, &delayMix, &reverbMix, &width, &master, &filterMode, &driveType, &voiceMode, &lfoShape, &lfoTarget, &lfoSync,
+             &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
+             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime,
+             &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &master, &filterMode, &driveType,
+             &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
              &previewButton })
         addAndMakeVisible (c);
@@ -886,11 +895,11 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
             browser.onClose();
         advanced.setVisible (advancedButton.getToggleState());
     };
-    presetButton.setTooltip ("Browse presets");
-    saveButton.setTooltip ("Save the current sound as a user preset");
-    advancedButton.setTooltip ("Filter envelope, delay time and feedback, reverb size, velocity, bend, oversampling");
-    menuButton.setTooltip ("Rename, delete, import and export presets");
-    previewButton.setTooltip ("Play a C3 note (1 s)");
+    presetButton.setTooltip (juce::String::fromUTF8 ("Список пресетов"));
+    saveButton.setTooltip (juce::String::fromUTF8 ("Сохранить звук как свой пресет"));
+    advancedButton.setTooltip (juce::String::fromUTF8 ("Огибающая фильтра, время и повторы дилея, размер реверберации, сила нажатия, бенд, подстройка OSC B, передискретизация"));
+    menuButton.setTooltip (juce::String::fromUTF8 ("Переименовать, удалить, импорт и экспорт пресетов"));
+    previewButton.setTooltip (juce::String::fromUTF8 ("Сыграть ноту C3 (1 с)"));
 
     setResizable (true, true);
     setResizeLimits (864, 576, 1620, 1080);
@@ -1062,24 +1071,30 @@ void PowerSynthEditor::resized()
     };
 
     const auto a = blocks (rowA, { "OSC A", "OSC B  /  NOISE", "FILTER" }, true);
-    primaryAndGrid (a[0], oscAShape, { &unison, &detune, &oscAOct, &oscALevel }, 2);
-    primaryAndGrid (a[1], oscBLevel, { &oscBShape, &oscBOct, &oscBSemi, &oscBFine, &fmAmount, &noise }, 3);
+    auto oa = a[0];
+    warpMode.setBounds (oa.removeFromTop (S (26)));
+    oa.removeFromTop (S (8));
+    primaryAndGrid (oa, oscAShape, { &unison, &detune, &warp, &oscAOct, &oscALevel, &ring }, 3);
+    auto ob = a[1];
+    ob.removeFromTop (S (34));   // level with the mode rows of OSC A and FILTER
+    primaryAndGrid (ob, oscBLevel, { &oscBShape, &oscBOct, &oscBSemi, &fmAmount, &noise }, 3);
     auto flt = a[2];
     filterMode.setBounds (flt.removeFromTop (S (26)));
     flt.removeFromTop (S (8));
-    primaryAndGrid (flt, cutoff, { &resonance, &fltEnv, &fltDecay }, 2);
+    primaryAndGrid (flt, cutoff, { &resonance, &fltEnv, &fltDecay, &grit }, 2);
 
     const auto b = blocks (rowB, { "AMP", "LFO", "FX" }, false); // modulators and effects: no signal-flow arrows
-    // AMP: the envelope on top; glide and the voice mode below.
+    // AMP: the voice mode on top, the envelope, then glide and the pitch envelope.
     auto amp = b[0];
-    auto envRow = amp.removeFromTop ((amp.getHeight() - S (8)) * 55 / 100);
+    voiceMode.setBounds (amp.removeFromTop (S (26)));
+    amp.removeFromTop (S (8));
+    auto envRow = amp.removeFromTop ((amp.getHeight() - S (8)) / 2);
     amp.removeFromTop (S (8));
     const int ew = envRow.getWidth() / 4;
     for (auto* k : { &attack, &decay, &sustain, &release })
         k->setBounds (envRow.removeFromLeft (ew));
-    glide.setBounds (amp.removeFromLeft (ew));
-    amp.removeFromLeft (S (8));
-    voiceMode.setBounds (amp.withSizeKeepingCentre (amp.getWidth(), S (26)));
+    for (auto* k : { &glide, &pitchEnv, &pitchTime })
+        k->setBounds (amp.removeFromLeft (ew));
 
     // LFO: waveform, then target and SYNC, then amount with rate and division.
     auto lfo = b[1];
@@ -1096,7 +1111,7 @@ void PowerSynthEditor::resized()
     auto fx = b[2];
     driveType.setBounds (fx.removeFromTop (S (26)));
     fx.removeFromTop (S (8));
-    primaryAndGrid (fx, drive, { &chorus, &delayMix, &reverbMix, &width }, 2);
+    primaryAndGrid (fx, drive, { &chorus, &delayMix, &reverbMix, &width, &smash, &shift }, 3);
 
     advanced.setBounds (getWidth() - S (24) - S (640), S (64), S (640), S (250));
     browser.setBounds (getLocalBounds().withTrimmedTop (S (60)).reduced (S (24), S (14)));

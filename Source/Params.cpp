@@ -50,6 +50,12 @@ void envelope (Layout& l, const char* a, const char* d, const char* s, const cha
 }
 }
 
+const juce::StringArray& shapeNames()
+{
+    static const juce::StringArray n { "SINE", "TRI", "SAW", "SQUARE", "HOLLOW", "VOX A", "VOX O", "GROWL", "SCREECH", "SYNC", "BITTER", "METAL", "INDUST" };
+    return n;
+}
+
 const juce::StringArray& allParamIds()
 {
     static const juce::StringArray ids { id::oscAShape, id::oscAOct, id::unison, id::detune, id::oscALevel, id::oscBShape, id::oscBOct, id::oscBSemi,
@@ -58,7 +64,8 @@ const juce::StringArray& allParamIds()
                                          id::sustain, id::release, id::lfoShape, id::lfoTarget, id::lfoRate, id::lfoSync, id::lfoDiv,
                                          id::lfoAmount, id::driveType, id::drive, id::chorus, id::delayMix, id::delayTime, id::delayFb,
                                          id::reverbMix, id::reverbSize, id::voiceMode, id::glide, id::width, id::master, id::velSens,
-                                         id::bendRange, id::oversample, id::analog };
+                                         id::bendRange, id::oversample, id::analog, id::warpMode, id::warp, id::ring,
+                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift };
     return ids;
 }
 
@@ -69,17 +76,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     Layout l;
     auto shapeText = [] (float v, int)
     {
-        static const char* names[] = { "SINE", "TRI", "SAW", "SQUARE" };
-        const int i = juce::jlimit (0, 3, juce::roundToInt (v));
-        return std::abs (v - (float) i) < 0.05f ? juce::String (names[i])
-                                                 : juce::String (names[(int) v]) + juce::String::fromUTF8 ("\xe2\x86\x92") + names[std::min (3, (int) v + 1)];
+        const auto& names = shapeNames();
+        const int i = juce::jlimit (0, (int) maxShape, juce::roundToInt (v));
+        return std::abs (v - (float) i) < 0.05f ? names[i]
+                                                 : names[(int) v] + juce::String::fromUTF8 ("\xe2\x86\x92") + names[std::min ((int) maxShape, (int) v + 1)];
     };
-    flt (l, id::oscAShape, "Osc A Shape", Range (0.0f, 3.0f), d.oscAShape, shapeText);
+    flt (l, id::oscAShape, "Osc A Shape", Range (0.0f, maxShape), d.oscAShape, shapeText);
     flt (l, id::oscAOct, "Osc A Octave", Range (-2.0f, 2.0f, 1.0f), (float) d.oscAOct, signedInt);
     flt (l, id::unison, "Unison", Range (1.0f, 7.0f, 1.0f), (float) d.unison, integer);
     unit (l, id::detune, "Detune", d.detune);
     unit (l, id::oscALevel, "Osc A Level", d.oscALevel);
-    flt (l, id::oscBShape, "Osc B Shape", Range (0.0f, 3.0f), d.oscBShape, shapeText);
+    flt (l, id::oscBShape, "Osc B Shape", Range (0.0f, maxShape), d.oscBShape, shapeText);
     flt (l, id::oscBOct, "Osc B Octave", Range (-2.0f, 2.0f, 1.0f), (float) d.oscBOct, signedInt);
     flt (l, id::oscBSemi, "Osc B Semitones", Range (-12.0f, 12.0f, 1.0f), (float) d.oscBSemi, signedInt);
     flt (l, id::oscBFine, "Osc B Fine", Range (-50.0f, 50.0f), d.oscBFine, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (v, 1) + " ct"; });
@@ -87,7 +94,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     unit (l, id::noise, "Noise", d.noise);
     unit (l, id::fmAmount, "FM B > A", d.fmAmount);
 
-    choice (l, id::filterMode, "Filter Mode", { "LP 24", "LP 12", "BP", "HP" }, (int) d.filterMode);
+    choice (l, id::filterMode, "Filter Mode", { "LP 24", "LP 12", "BP", "HP", "Comb" }, (int) d.filterMode);
     flt (l, id::cutoff, "Cutoff", skewed (30.0f, 18000.0f, 1200.0f), d.cutoffHz, hz);
     unit (l, id::resonance, "Resonance", d.resonance);
     flt (l, id::fltEnv, "Filter Env", Range (-1.0f, 1.0f), d.fltEnv, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " %"; });
@@ -119,6 +126,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     choice (l, id::oversample, "Oversampling", { "2x", "4x", "8x" }, d.oversampleIndex);
     // DIGITAL | ANALOGUE, as in PowerKick and PowerBass: Analogue adds drift, spread, warmth and a softer top.
     choice (l, id::analog, "Digital/Analogue", { "Digital", "Analogue" }, d.analog ? 1 : 0);
+    // 2.0 (2026-10-29)
+    choice (l, id::warpMode, "Warp Mode", { "Sync", "Bend", "PWM", "Fold" }, (int) d.warpMode);
+    unit (l, id::warp, "Warp", d.warp);
+    unit (l, id::ring, "Ring", d.ring);
+    flt (l, id::pitchEnv, "Pitch Env", Range (-24.0f, 48.0f, 0.1f), d.pitchEnv, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (v, 1) + " st"; });
+    flt (l, id::pitchTime, "Pitch Time", skewed (2.0f, 2000.0f, 120.0f), d.pitchTimeMs, ms);
+    unit (l, id::grit, "Grit", d.grit);
+    unit (l, id::smash, "Smash", d.smash);
+    unit (l, id::shift, "Shift", d.shift);
     return l;
 }
 
@@ -138,7 +154,7 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.oscBLevel = get (id::oscBLevel, p.oscBLevel);
     p.noise = get (id::noise, p.noise);
     p.fmAmount = get (id::fmAmount, p.fmAmount);
-    p.filterMode = (FilterMode) juce::jlimit (0, 3, i (id::filterMode, (int) p.filterMode));
+    p.filterMode = (FilterMode) juce::jlimit (0, 4, i (id::filterMode, (int) p.filterMode));
     p.cutoffHz = get (id::cutoff, p.cutoffHz);
     p.resonance = get (id::resonance, p.resonance);
     p.fltEnv = get (id::fltEnv, p.fltEnv);
@@ -172,6 +188,14 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.bendRange = get (id::bendRange, p.bendRange);
     p.oversampleIndex = juce::jlimit (0, 2, i (id::oversample, p.oversampleIndex));
     p.analog = get (id::analog, p.analog ? 1.0f : 0.0f) > 0.5f;
+    p.warpMode = (WarpMode) juce::jlimit (0, 3, i (id::warpMode, (int) p.warpMode));
+    p.warp = get (id::warp, p.warp);
+    p.ring = get (id::ring, p.ring);
+    p.pitchEnv = get (id::pitchEnv, p.pitchEnv);
+    p.pitchTimeMs = get (id::pitchTime, p.pitchTimeMs);
+    p.grit = get (id::grit, p.grit);
+    p.smash = get (id::smash, p.smash);
+    p.shift = get (id::shift, p.shift);
     return p;
 }
 

@@ -59,9 +59,22 @@ namespace id
     inline constexpr const char* bendRange  = "bendRange";
     inline constexpr const char* oversample = "oversample";
     inline constexpr const char* analog     = "analog";
+    // 2.0 (2026-10-29): modern character
+    inline constexpr const char* warpMode   = "warpMode";
+    inline constexpr const char* warp       = "warp";
+    inline constexpr const char* ring       = "ring";
+    inline constexpr const char* pitchEnv   = "pitchEnv";
+    inline constexpr const char* pitchTime  = "pitchTime";
+    inline constexpr const char* grit       = "grit";
+    inline constexpr const char* smash      = "smash";
+    inline constexpr const char* shift      = "shift";
 }
 
-enum class FilterMode { lp24, lp12, bp, hp };
+enum class FilterMode { lp24, lp12, bp, hp, comb };
+enum class WarpMode { sync, bend, pwm, fold };
+// Oscillator shapes: 0 sine, 1 triangle, 2 saw, 3 square (classic, polyBLEP), 4..12 the hidden wavetables (WaveBank).
+inline constexpr float maxShape = 12.0f;
+const juce::StringArray& shapeNames();
 enum class DriveType { saturate, clip, fold, crush };
 enum class LfoShape { sine, triangle, saw, square, random };
 enum class LfoTarget { pitch, cutoff, shape, amp };
@@ -120,6 +133,15 @@ struct SynthParams
     float bendRange = 2.0f;
     int oversampleIndex = 1;      // drive oversampling: 0 = 2x, 1 = 4x, 2 = 8x
     bool analog = false;          // DIGITAL | ANALOGUE
+    // 2.0: all neutral by default (an older project sounds as before)
+    WarpMode warpMode = WarpMode::sync;
+    float warp = 0.0f;            // OSC A: SYNC (hard sync), BEND (phase bend), PWM (hoover), FOLD (wave folding)
+    float ring = 0.0f;            // OSC A x OSC B
+    float pitchEnv = 0.0f;        // semitones at the start of a note
+    float pitchTimeMs = 80.0f;    // time to fall to about 5 %
+    float grit = 0.0f;            // drive into (and inside) the filter
+    float smash = 0.0f;           // 3-band upward + downward compression (OTT-like density)
+    float shift = 0.0f;           // a small frequency shift before the drive
     double bpm = 120.0;           // host tempo (not a parameter; set by the processor)
 };
 
