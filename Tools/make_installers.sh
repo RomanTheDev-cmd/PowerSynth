@@ -4,6 +4,8 @@
 #                                                          "all users" (/Library, /Applications) or "only me" (~)
 #   Установщики/<Name>-<ver>-Windows-x64-Setup.exe         VST3 to Common Files\VST3, standalone to Program Files,
 #                                                          Start menu shortcut, uninstaller (NSIS: brew install makensis)
+#   then both are copied to ../Plaguins/<Name>/ (Roman's folder with the current installers of every plug-in);
+#   this plug-in's earlier installers there go to the Trash (TRASH_DIR overrides ~/.Trash for tests)
 # The .pkg is not signed with a Developer ID (none available): macOS asks to confirm opening it.
 #   bash Tools/make_installers.sh
 set -euo pipefail
@@ -80,3 +82,18 @@ echo "macOS:   $OUT/$NAME-$VER-macOS.pkg ($(du -h "$OUT/$NAME-$VER-macOS.pkg" | 
 LC_ALL=en_US.UTF-8 makensis -V2 -INPUTCHARSET UTF8 -DNAME="$NAME" -DVER="$VER" -DSRC="$B/Windows" -DOUTFILE="$OUT/$NAME-$VER-Windows-x64-Setup.exe" \
          "$HERE/installer_windows.nsi"
 echo "Windows: $OUT/$NAME-$VER-Windows-x64-Setup.exe ($(du -h "$OUT/$NAME-$VER-Windows-x64-Setup.exe" | cut -f1))"
+
+# ---------- Проекты/Plaguins/<Name> ----------
+# Roman's folder with the current installers of every plug-in (2026-10-29). This plug-in's earlier installers there
+# (any version, also a rebuild of the same one) go to the Trash; other files there are left alone.
+PLAG="$(dirname "$PROJ")/Plaguins/$NAME"
+TRASH="${TRASH_DIR:-$HOME/.Trash}/Plaguins — $NAME до $VER $(date '+%Y-%m-%d %H%M%S')"
+mkdir -p "$PLAG"
+for f in "$PLAG/$NAME"-*-macOS.pkg "$PLAG/$NAME"-*-Windows-x64-Setup.exe; do
+  if [ -e "$f" ]; then mkdir -p "$TRASH"; mv "$f" "$TRASH/"; fi
+done
+for f in "$NAME-$VER-macOS.pkg" "$NAME-$VER-Windows-x64-Setup.exe"; do
+  cp -p "$OUT/$f" "$PLAG/$f"
+  cmp -s "$OUT/$f" "$PLAG/$f" || { echo "Plaguins: копия $f не совпадает с установщиком" >&2; exit 1; }
+done
+echo "Plaguins: $PLAG$([ -d "$TRASH" ] && echo " (прежние — в Корзине «$(basename "$TRASH")»)")"
