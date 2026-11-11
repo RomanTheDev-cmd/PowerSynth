@@ -4,6 +4,9 @@
                                           preset fitted per medoid, starting from the hand-made presets
   python3 fit_synth.py apply FIT.json      writes them between the markers in Source/FactoryPresets.inc
   python3 fit_synth.py extend OUT.json     2.3: the new archetypes on references no preset uses yet (then apply-refit)
+  python3 fit_synth.py power OUT.json      3.0: every preset re-fitted to its own reference on the 3.0 engine (new SMASH,
+                                          PUNCH), with the power terms: not sparser than the reference, a held note
+                                          dense and at once there (then apply-refit)
   python3 fit_synth.py audit               distance of every factory preset to the nearest reference of its category
 
 Only feature numbers of the references are used; no reference audio ends up in PowerSynth. MASTER is fixed while
@@ -34,15 +37,20 @@ SPACE = {
     "delayFb": (0, 0.6, False), "reverbMix": (0, 0.9, False), "reverbSize": (0, 1, False), "width": (0, 1, False),
     "lfoAmount": (0, 1, False), "lfoRate": (0.05, 12, True),
     "warp": (0, 1, False), "ring": (0, 0.8, False), "pitchEnv": (-12, 36, False), "pitchTime": (5, 800, True),
-    "grit": (0, 1, False), "smash": (0.3, 1, False), "shift": (0, 0.6, False), "morphEnv": (-1, 1, False),
+    "grit": (0, 1, False), "smash": (0, 1, False), "shift": (0, 0.6, False), "morphEnv": (-1, 1, False),
+    "punch": (0, 1, False),   # 3.0; SMASH has no floor any more (it is a tone balance before the drive now)
 }
 INTS = {"unison": (1, 7), "oscAOct": (-1, 1), "oscBOct": (-2, 2)}
 SEMIS = [0, 0, 0, 7, 12, -12, 5, 3, -5]
 CHOICES = {"filterMode": 5, "driveType": 4, "lfoShape": 5, "lfoTarget": 5, "delayTime": 9, "warpMode": 4, "lfoDiv": 9}
 # Usability limits per category (a lead must speak at once, a pad must swell).
-LIMITS = {"Leads": {"attack": (0.5, 40), "release": (5, 800)}, "Rave & Hoover": {"attack": (0.5, 60), "release": (5, 1500)},
-          "Acid": {"attack": (0.5, 20), "release": (5, 300)}, "Pads": {"attack": (30, 4000)}, "Textures": {}, "Atmospheres": {},
-          "Stabs": {"attack": (0.5, 15)}, "Arps & Plucks": {"attack": (0.5, 20), "release": (5, 800)}}
+# 3.0 (2026-11-12, Roman: "limp and weak"): what must speak at once has a short attack, some PUNCH and little wash.
+LIMITS = {"Leads": {"attack": (0.5, 10), "release": (5, 800), "punch": (0.3, 1), "reverbMix": (0, 0.35), "delayMix": (0, 0.35)},
+          "Rave & Hoover": {"attack": (0.5, 15), "release": (5, 1500), "punch": (0.2, 1), "reverbMix": (0, 0.4), "delayMix": (0, 0.4)},
+          "Acid": {"attack": (0.5, 8), "release": (5, 300), "punch": (0.2, 1), "reverbMix": (0, 0.3), "delayMix": (0, 0.35)},
+          "Pads": {"attack": (30, 4000)}, "Textures": {}, "Atmospheres": {},
+          "Stabs": {"attack": (0.5, 5), "punch": (0.3, 1)},
+          "Arps & Plucks": {"attack": (0.5, 5), "release": (5, 800), "punch": (0.3, 1), "reverbMix": (0, 0.4)}}
 FIXED = {}
 DEFAULTS = {"oscAShape": 2.0, "detune": 0.25, "oscALevel": 1.0, "oscBShape": 3.0, "oscBFine": 7.0, "oscBLevel": 0.4,
             "noise": 0.0, "fmAmount": 0.0, "cutoff": 3500, "resonance": 0.25, "fltEnv": 0.3, "fltDecay": 400,
@@ -50,7 +58,7 @@ DEFAULTS = {"oscAShape": 2.0, "detune": 0.25, "oscALevel": 1.0, "oscBShape": 3.0
             "delayMix": 0.0, "delayFb": 0.35, "reverbMix": 0.15, "reverbSize": 0.6, "width": 0.6, "lfoAmount": 0.0,
             "lfoRate": 2.0, "unison": 3, "oscAOct": 0, "oscBOct": 0, "oscBSemi": 0, "filterMode": 0, "driveType": 0,
             "lfoShape": 0, "lfoTarget": 1, "delayTime": 3, "warpMode": 0, "lfoDiv": 3, "warp": 0.0, "ring": 0.0,
-            "pitchEnv": 0.0, "pitchTime": 80.0, "grit": 0.0, "smash": 0.3, "shift": 0.0, "morphEnv": 0.0}
+            "pitchEnv": 0.0, "pitchTime": 80.0, "grit": 0.0, "smash": 0.3, "shift": 0.0, "morphEnv": 0.0, "punch": 0.0}
 
 
 def note_for(f0):
@@ -136,7 +144,18 @@ def fit_one(job):
     def cost(p):
         x = r.render({**p, **fixed}, root, phrase, bpm, rlen)[: int(alen * SR)]
         f = features(x, SR)
-        return (1e9, {}) if f is None else distance(f, ref["feat"], True)
+        if f is None:
+            return (1e9, {})
+        c, parts = distance(f, ref["feat"], True)
+        if POWER:
+            pen = max(0.0, f["crest"] - ref["feat"]["crest"] - 1.0)          # never sparser than the reference
+            if cat in HELD:      # one held note (C4): dense, and there at once
+                y = r.render({**p, **fixed}, 60, 4, bpm, 1.2)
+                pen += max(0.0, held_crest(y) - 9.0) + 0.1 * max(0.0, rise_ms(y) - 10.0)
+            elif cat in SHORT:   # one short note: there at once
+                pen += 0.1 * max(0.0, rise_ms(r.render({**p, **fixed}, 60, 5, bpm, 0.6)) - 10.0)
+            c += pen; parts = {**parts, "power": pen}
+        return c, parts
     best, bc, bparts = None, 1e9, {}
     for s in starts:
         s = clamp(cat, s)
@@ -167,6 +186,24 @@ def fit_one(job):
                 best, bc, bparts = q, c, parts
     r.p.kill()
     return clamp(cat, {**best, **FIXED.get(cat, {})}), bc, bparts
+
+
+POWER = False
+HELD, SHORT = ("Leads", "Rave & Hoover", "Acid"), ("Stabs", "Arps & Plucks")
+
+
+def rise_ms(x):
+    """From the first 2 ms frame above 1 % of the loudest to the first within 3 dB of it."""
+    m = np.abs(x).max(axis=1); h = int(0.002 * SR)
+    fr = np.sqrt(np.mean(m[: len(m) // h * h].reshape(-1, h) ** 2, axis=1))
+    pk = fr.max()
+    return 2.0 * (int(np.argmax(fr > pk * 0.707)) - int(np.argmax(fr > pk * 0.01))) if pk > 1e-6 else 0.0
+
+
+def held_crest(x):
+    """Peak / RMS of 0.2..1.0 s of a held note, dB: what loudness the sound has at a given peak."""
+    seg = x[int(0.2 * SR): int(1.0 * SR)]
+    return float(20 * np.log10(np.abs(seg).max() / (np.sqrt(np.mean(seg ** 2)) + 1e-12) + 1e-12))
 
 
 def kmedoids(fs, k, iters=30, seed=1, fixed=()):
@@ -326,6 +363,43 @@ def refit(out_path):
     print("median distance %.2f -> %.2f, %d presets in %.0f s" % (b[len(b) // 2], a[len(a) // 2], len(out), time.time() - t0))
 
 
+def power(out_path):
+    """3.0: each preset keeps its reference (the note after its row) and is fitted again from itself on the new engine."""
+    global POWER
+    POWER = True
+    refs = {x["file"].split("/")[-1]: x for x in pickle.load(open(os.path.join(HERE, "..", "Референсы", "synth_features.pkl"), "rb"))}
+    lib = []
+    for line in open(INC, encoding="utf-8"):
+        m = ENTRY.match(line)
+        t = re.search(r"// fit [\d.]+ \(was [\d.]+\) to (.+?\.wav)", line)
+        if m and t and t.group(1) in refs:
+            vals = {k: float(v.rstrip("f")) for k, v in re.findall(r'\{"([^"]+)",(-?[\d.e+]+f?)\}', m.group(3))}
+            lib.append({"name": m.group(1), "cat": m.group(2), "params": vals, "ref": refs[t.group(1)]})
+    only = set(filter(None, os.environ.get("FIT_NAMES", "").split("|")))
+    jobs = []
+    for i, e in enumerate(lib):
+        if only and e["name"] not in only: continue
+        others = [x["params"] for x in lib if x["cat"] == e["cat"] and x is not e][:4]
+        jobs.append((e["ref"], e["cat"], [e["params"]] + others, 3000 + i, int(os.environ.get("FIT_ITERS", 60))))
+    sel = [e for e in lib if not only or e["name"] in only]
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=int(os.environ.get("FIT_WORKERS", 9)), initializer=_power_on) as ex:
+        results = list(ex.map(fit_one, jobs, chunksize=1))
+    out = []
+    for e, (p, c, parts) in zip(sel, results):
+        out.append({"name": e["name"], "category": e["cat"], "target": e["ref"]["file"].split("/")[-1], "params": p, "before": 0.0,
+                    "distance": c, "parts": parts})
+        print("%-24s %-14s %5.2f  power %4.1f  <- %s" % (e["name"], e["cat"], c, parts.get("power", 0), e["ref"]["file"].split("/")[-1]))
+    json.dump(out, open(out_path, "w"), indent=1, ensure_ascii=False)
+    a = sorted(o["distance"] for o in out)
+    print("median distance %.2f, %d presets in %.0f s" % (a[len(a) // 2], len(out), time.time() - t0))
+
+
+def _power_on():
+    global POWER
+    POWER = True
+
+
 # 2.3 (2026-10-29): Textures, a category of its own, are fitted to the texture loops among the atmosphere references.
 TEXTURE_FOLDERS = ("Machine Texture Loops", "Industrial Noise")
 
@@ -427,7 +501,7 @@ def apply_refit(fit_path):
             p = finish(m.group(1), {k: v for k, v in f["params"].items() if k != "master"})
             p["master"] = -12.0
             body = ",".join('{"%s",%s}' % (k, lit(k, p[k])) for k in sorted(p))
-            line = '{ "%s", "%s", { %s }, "%s" }, // fit %.1f (was %.1f) to %s\n' % (m.group(1), m.group(2), body, m.group(4),
+            line = '{ "%s", "%s", { %s }, "%s" }, // fit %.1f (was %.1f) to %s\n' % (m.group(1), m.group(2), body, group_of(p) if False else m.group(4),
                                                                                        f["distance"], f["before"], f["target"])
             n += 1
         lines.append(line)
@@ -437,5 +511,5 @@ def apply_refit(fit_path):
 
 if __name__ == "__main__":
     {"fit": lambda: fit(sys.argv[2]), "apply": lambda: apply(sys.argv[2]), "audit": audit, "refit": lambda: refit(sys.argv[2]),
-     "extend": lambda: extend(sys.argv[2]),
+     "extend": lambda: extend(sys.argv[2]), "power": lambda: power(sys.argv[2]),
      "apply-refit": lambda: apply_refit(sys.argv[2])}[sys.argv[1]]()

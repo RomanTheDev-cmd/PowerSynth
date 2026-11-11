@@ -18,7 +18,7 @@
 //   unison voices spread in stereo, OSC B (octave, semitones, fine, level; phase-modulates A with FM), noise ->
 //   per-voice filter (LP24/LP12/BP/HP, its own ADSR, key tracking) -> amp ADSR. One LFO (free or at the host tempo)
 //   on pitch, cutoff, shape or amplitude. MONO / LEGATO with last-note priority and GLIDE.
-//   Sum -> DC blocker -> DRIVE (oversampled) -> chorus -> tempo delay -> reverb -> width (lows mono) ->
+//   Sum -> SHIFT -> SMASH -> DRIVE (oversampled) -> DC blocker -> PUNCH -> chorus -> tempo delay -> reverb -> width (lows mono) ->
 //   DIGITAL | ANALOGUE top -> MASTER -> linked soft ceiling.
 // Oscillators run at the base rate with polyBLEP (the morph of PowerBass). No allocation in process().
 namespace ps::dsp
@@ -196,12 +196,17 @@ struct Shifter
     }
 };
 
-// SMASH: three bands (Linkwitz-Riley, flat sum), each levelled towards -26 dBFS from above and below (OTT-like).
+// SMASH 3.0 (2026-11-12): three bands (Linkwitz-Riley, flat sum) balanced against the level of the sound itself, before
+// the drive. A band weaker than its place under the broadband level (low -10, mid -3, top -9 dB) is brought up (at most
+// +9 / +6 / +6 dB), a dominant one is held down (at most -9 dB). Nothing is measured against an absolute level, so a
+// tail decays as it was played and silence stays silence; the drive that follows keeps the result dense.
+// (2.x levelled every band to -26 dBFS after the drive: a held driven note lost 5-6 dB of loudness at the same peak and
+// the top band and the tails came up by as much as 30 dB - "weak", "harsh", "every sound alike".)
 struct Smash
 {
     juce::dsp::LinkwitzRileyFilter<float> s1, s2, ap;
-    std::array<double, 3> env {};
-    double sr = 48000.0, att = 0.0, rel = 0.0;
+    std::array<double, 3> env {}, gain {};
+    double sr = 48000.0, rel = 0.0, wide = 0.0, slew = 0.0;
     void prepare (double rate, int block)
     {
         sr = rate;
@@ -209,15 +214,20 @@ struct Smash
         for (auto* f : { &s1, &s2, &ap }) f->prepare (spec);
         ap.setType (juce::dsp::LinkwitzRileyFilterType::allpass);
         s1.setCutoffFrequency (120.0f); s2.setCutoffFrequency ((float) std::min (2500.0, sr * 0.45)); ap.setCutoffFrequency ((float) std::min (2500.0, sr * 0.45));
-        att = std::exp (-1.0 / (0.0005 * sr)); rel = std::exp (-1.0 / (0.06 * sr));
+        rel = std::exp (-1.0 / (0.06 * sr)); slew = 1.0 - std::exp (-1.0 / (0.005 * sr));
         reset();
     }
-    void reset() { s1.reset(); s2.reset(); ap.reset(); env.fill (0.0); }
+    void reset() { s1.reset(); s2.reset(); ap.reset(); env.fill (0.0); gain.fill (0.0); wide = 0.0; }
     void process (float* L, float* R, int n, double amount)
     {
         if (amount <= 0.001) return;
+        static constexpr double place[3] { -10.0, -3.0, -9.0 }, up[3] { 9.0, 6.0, 6.0 };
         for (int i = 0; i < n; ++i)
         {
+            const double in = std::max (std::abs (L[i]), std::abs (R[i]));
+            wide = in > wide ? in : in + rel * (wide - in);   // the same release as the bands: a decaying note keeps its balance
+            const double wideDb = 20.0 * std::log10 (wide + 1.0e-9);
+            const double open = juce::jlimit (0.0, 1.0, (wideDb + 70.0) / 15.0);   // nothing is done to what is below -70 dBFS
             float b[3][2];
             float* ch[2] = { L, R };
             for (int c = 0; c < 2; ++c)
@@ -231,15 +241,12 @@ struct Smash
             for (int k = 0; k < 3; ++k)
             {
                 const double lv = std::max (std::abs (b[k][0]), std::abs (b[k][1]));
-                env[(size_t) k] = lv > env[(size_t) k] ? lv : lv + rel * (env[(size_t) k] - lv);   // instant attack: a lifted tail never lets the next hit through boosted
+                env[(size_t) k] = lv > env[(size_t) k] ? lv : lv + rel * (env[(size_t) k] - lv);
                 const double d = 20.0 * std::log10 (env[(size_t) k] + 1.0e-9);
-                // levelled towards -26 dBFS: loud parts down (up to 8:1), quiet parts up (up to 6:1, +30 dB), silence untouched
-                const double over = d + 26.0;
-                const double gainDb = over > 0.0 ? -over * (1.0 - 1.0 / (1.0 + 7.0 * amount))
-                                                 : std::min (30.0 * amount, -over * (1.0 - 1.0 / (1.0 + 5.0 * amount))) * juce::jlimit (0.0, 1.0, (d + 60.0) / 15.0);   // nothing below -60 dBFS is lifted: tails still die
-                const double g = std::pow (10.0, (gainDb + 8.0 * amount) / 20.0);
-                const double mix = 1.0 + amount * (g - 1.0);
-                out[0] += (float) (b[k][0] * mix); out[1] += (float) (b[k][1] * mix);
+                const double want = juce::jlimit (-9.0, up[k], 0.7 * (wideDb + place[k] - d)) * amount * open;
+                gain[(size_t) k] += slew * (want - gain[(size_t) k]);   // 5 ms: the gain does not follow single cycles
+                const double g = std::pow (10.0, gain[(size_t) k] / 20.0);
+                out[0] += (float) (b[k][0] * g); out[1] += (float) (b[k][1] * g);
             }
             L[i] = out[0]; R[i] = out[1];
         }
@@ -602,7 +609,7 @@ public:
         held.clear(); bendSemis = 0.0; lfoPhase = 0.0; lfoValue = 0.0; lfoHeld = 0.0;
         anaRand.seed (0x5EED2810u);
         gMaster = gDrive = gChorus = gDelay = gReverb = gWidth = -1.0;
-        anaEIn = anaEOut = 0.0; anaG = 1.0;
+        anaEIn = anaEOut = 0.0; anaG = 1.0; punchEnv = punchGain = punchSmooth = 0.0;
         lastVoice = -1;
     }
 
@@ -674,6 +681,7 @@ private:
             const bool legato = p.voiceMode == VoiceMode::legato && sounding && held.size() > 1;
             const double from = v.isActive() && p.glideMs > 0.5f ? v.getLogFreq() : -1.0;
             v.start (note, vel, p, anaRand, from, ! legato);
+            if (! legato) punchEnv = 1.0;
             return;
         }
         // Poly: a free slot; when 8 already sound, the quietest (released first, else oldest) fades out in 3 ms.
@@ -701,6 +709,7 @@ private:
         }
         const double from = p.glideMs > 0.5f && lastVoice >= 0 ? lastLogFreq : -1.0;
         voices[(size_t) slot].start (note, vel, p, anaRand, from, true);
+        punchEnv = 1.0;
         lastVoice = slot;
         lastLogFreq = std::log (440.0 * std::exp2 ((note - 69) / 12.0));
     }
@@ -768,6 +777,9 @@ private:
             for (int i = 0; i < n; ++i) { L[i] = (float) shifter[0].tick (L[i], hz, sr); R[i] = (float) shifter[1].tick (R[i], hz * 1.07, sr); }
         }
 
+        // SMASH: the three bands balanced against the sound's own level, before the drive
+        smashFx.process (L, R, n, p.smash);
+
         // DRIVE, oversampled; drive 0 is clean (blend in over the first quarter of the knob).
         if (p.drive > 0.001f || gDrive > 0.001)
         {
@@ -807,8 +819,21 @@ private:
         // DC blocker after the drive: SAT is biased on purpose (even harmonics), so it adds an offset.
         for (int i = 0; i < n; ++i) { L[i] = (float) dcL.tick (L[i]); R[i] = (float) dcR.tick (R[i]); }
 
-        // SMASH: three-band upward + downward compression, the modern density
-        smashFx.process (L, R, n, p.smash);
+        // PUNCH: the start of every note up to 6 dB louder, fading in about 25 ms - after the drive, which flattens the
+        // attack of the envelope. The gain rises within 1 ms, so a note over held ones does not click.
+        if (p.punch > 0.001f || punchSmooth > 1.0e-4)
+        {
+            const double fall = std::exp (-1.0 / (0.025 * sr)), rise = 1.0 - std::exp (-1.0 / (0.0007 * sr));
+            for (int i = 0; i < n; ++i)
+            {
+                punchEnv *= fall;
+                const double want = punchEnv * p.punch;
+                punchGain = want > punchGain ? punchGain + rise * (want - punchGain) : want;
+                punchSmooth += rise * (punchGain - punchSmooth);   // a second pole: no corner where the bump starts
+                L[i] *= (float) (1.0 + punchSmooth); R[i] *= (float) (1.0 + punchSmooth);
+            }
+        }
+        else punchEnv = 0.0;
 
         // CHORUS
         if (p.chorus > 0.001f)
@@ -905,6 +930,6 @@ private:
     double anaEIn = 0.0, anaEOut = 0.0, anaG = 1.0;
     const double anaKE = 0.9990, anaKG = 0.9996;
     double gMaster = -1.0, gDrive = -1.0, gChorus = -1.0, gDelay = -1.0, gReverb = -1.0, gWidth = -1.0;
-    double dampL = 0.0, dampR = 0.0, crushL = 0.0, crushR = 0.0;
+    double dampL = 0.0, dampR = 0.0, crushL = 0.0, crushR = 0.0, punchEnv = 0.0, punchGain = 0.0, punchSmooth = 0.0;
 };
 }

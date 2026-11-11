@@ -902,6 +902,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       glide (p.state, ps::id::glide, "GLIDE", juce::String::fromUTF8 ("Скольжение высоты между нотами")),
       pitchEnv (p.state, ps::id::pitchEnv, "PITCH", juce::String::fromUTF8 ("Сдвиг высоты в начале ноты, в полутонах: + удар сверху (стэбы, шоты), − подъём снизу (хувер)")),
       pitchTime (p.state, ps::id::pitchTime, "P.TIME", juce::String::fromUTF8 ("За сколько высота возвращается к ноте")),
+      punch (p.state, ps::id::punch, "PUNCH", juce::String::fromUTF8 ("Удар в начале каждой ноты: первые ~25 мс громче (до +6 дБ), уже после дисторшна — атака не сплющивается")),
       lfoAmount (p.state, ps::id::lfoAmount, "AMOUNT", juce::String::fromUTF8 ("Глубина LFO на выбранной цели")),
       lfoRate (p.state, ps::id::lfoRate, "RATE", juce::String::fromUTF8 ("Скорость LFO в герцах (когда SYNC выключен)")),
       lfoDiv (p.state, ps::id::lfoDiv, "DIV", juce::String::fromUTF8 ("Длительность периода LFO в долях такта (когда SYNC включён)")),
@@ -910,7 +911,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       delayMix (p.state, ps::id::delayMix, "DELAY", juce::String::fromUTF8 ("Пинг-понг дилей в темпе проекта (время и повторы — в ADVANCED)")),
       reverbMix (p.state, ps::id::reverbMix, "REVERB", juce::String::fromUTF8 ("Реверберация (размер — в ADVANCED)")),
       width (p.state, ps::id::width, "WIDTH", juce::String::fromUTF8 ("Ширина стерео; ниже 150 Гц остаётся моно")),
-      smash (p.state, ps::id::smash, "SMASH", juce::String::fromUTF8 ("Трёхполосное сжатие вверх и вниз в духе OTT: громкое прижимается, хвосты и детали поднимаются — современная плотность")),
+      smash (p.state, ps::id::smash, "SMASH", juce::String::fromUTF8 ("Трёхполосное выравнивание перед дисторшном: слабые полосы подтягиваются к громкости самой ноты, главная прижимается — яркость и плотность без подъёма шума и хвостов")),
       shift (p.state, ps::id::shift, "SHIFT", juce::String::fromUTF8 ("Небольшой сдвиг частоты перед дисторшном: призвуки становятся нетональными — звук машины, а не плагина")),
       master (p.state, ps::id::master, "MASTER", juce::String::fromUTF8 ("Громкость на выходе")),
       filterMode (p.state, ps::id::filterMode, { "LP24", "LP12", "BP", "HP", "COMB" }, juce::String::fromUTF8 ("Режим фильтра; COMB — гребёнка по высоте ноты: металл и индустриальный звон")),
@@ -932,7 +933,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
 
     for (auto* c : std::initializer_list<juce::Component*> {
              &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
-             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime,
+             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime, &punch,
              &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &master, &filterMode, &driveType,
              &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
@@ -1190,7 +1191,7 @@ void PowerSynthEditor::resized()
     const int ew = envRow.getWidth() / 4;
     for (auto* k : { &attack, &decay, &sustain, &release })
         k->setBounds (envRow.removeFromLeft (ew));
-    for (auto* k : { &glide, &pitchEnv, &pitchTime })
+    for (auto* k : { &glide, &pitchEnv, &pitchTime, &punch })
         k->setBounds (amp.removeFromLeft (ew));
 
     // LFO: waveform, then target and SYNC, then amount with rate and division.

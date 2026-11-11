@@ -430,15 +430,55 @@ void testCharacter()
         const double on = tonePower (a, 440.0, 0.2, 1.0), offPk = tonePower (a, 550.0, 0.2, 1.0);
         expect (finite (a) && peak (a) <= 1.0 && on > 8.0 * offPk, "COMB rings at the note (" + juce::String (db (std::sqrt (on / offPk)), 1) + " dB on/off)");
     }
-    // SMASH: denser (lower crest factor) on plucks.
+    // SMASH 3.0 (2026-11-12; Roman: "limp and weak, no power"). The 2.x SMASH levelled every band to a fixed -26 dBFS
+    // after the drive: a held driven note lost 5-6 dB of loudness at the same peak (crest 5.7 -> 11.3 dB, median of the
+    // lead presets), the top band and every tail were lifted by up to 30 dB. Now it works before the drive and relative
+    // to the note's own level.
     {
-        auto p = plain(); p.sustain = 0.0f; p.decayMs = 300.0f; p.oscAShape = 2.0f;
-        std::vector<Note> plucks;
-        for (int k = 0; k < 6; ++k) plucks.push_back ({ k * 0.25, k * 0.25 + 0.2, 57 });
+        const std::vector<Note> chord { { 0.0, 1.4, 48 }, { 0.0, 1.4, 55 }, { 0.0, 1.4, 60 } };
+        auto p = plain(); p.oscAShape = 2.0f; p.unison = 5; p.detune = 0.3f; p.drive = 0.6f; p.cutoffHz = 3000.0f;
+        auto sm = p; sm.smash = 0.8f;
+        const auto a = render (p, chord, 1.5), b = render (sm, chord, 1.5);
+        const int i0 = 9600, i1 = 62400;
+        const double ca = db (peak (a, i0, i1) / rms (a, i0, i1)), cb = db (peak (b, i0, i1) / rms (b, i0, i1));
+        expect (finite (b) && cb <= ca + 1.5, "SMASH keeps a driven chord dense (crest " + juce::String (ca, 1) + " -> " + juce::String (cb, 1) + " dB)");
+    }
+    {
+        // a stab with a long release: 300..500 ms after the note the tail is not lifted
+        auto p = plain(); p.oscAShape = 2.0f; p.releaseMs = 600.0f; p.drive = 0.5f; p.cutoffHz = 2000.0f;
         auto sm = p; sm.smash = 1.0f;
-        const auto a = render (p, plucks, 1.6), b = render (sm, plucks, 1.6);
-        const double ca = db (peak (a) / rms (a)), cb = db (peak (b) / rms (b));
-        expect (finite (b) && cb < ca - 2.0, "SMASH makes it denser (crest " + juce::String (ca, 1) + " -> " + juce::String (cb, 1) + " dB; peak " + juce::String (db (peak (a)), 1) + " -> " + juce::String (db (peak (b)), 1) + ", rms " + juce::String (db (rms (a)), 1) + " -> " + juce::String (db (rms (b)), 1) + ")");
+        const std::vector<Note> stab { { 0.0, 0.15, 57 } };
+        const auto a = render (p, stab, 1.0), b = render (sm, stab, 1.0);
+        const double ta = db (rms (a, 21600, 31200) / peak (a)), tb = db (rms (b, 21600, 31200) / peak (b));
+        expect (finite (b) && tb <= ta + 3.0, "SMASH does not lift the tail (" + juce::String (ta, 1) + " -> " + juce::String (tb, 1) + " dB under the peak)");
+    }
+    {
+        // a dull sound gets its top back: the share above 2.5 kHz rises
+        auto p = plain(); p.oscAShape = 2.0f; p.cutoffHz = 700.0f; p.filterMode = FilterMode::lp12;
+        auto sm = p; sm.smash = 1.0f;
+        const auto a = render (p, held, 1.3), b = render (sm, held, 1.3);
+        auto top = [] (const juce::AudioBuffer<float>& x)
+        {
+            double hi = 0.0, all = 0.0;
+            for (int k = 1; k <= 60; ++k) { const double pw = tonePower (x, 220.0 * k, 0.2, 1.0); all += pw; if (220.0 * k > 2500.0) hi += pw; }
+            return db (std::sqrt (hi / all));
+        };
+        expect (finite (b) && top (b) >= top (a) + 3.0, "SMASH brings up the weak top of a dull sound (" + juce::String (top (a), 1) + " -> " + juce::String (top (b), 1) + " dB of the whole)");
+    }
+    // PUNCH 3.0: the start of each note stands out after the drive (the drive flattens the attack of the envelope).
+    {
+        auto p = plain(); p.oscAShape = 2.0f; p.drive = 0.6f; p.unison = 3; p.detune = 0.2f;
+        auto pu = p; pu.punch = 1.0f;
+        const auto a = render (p, held, 1.3), b = render (pu, held, 1.3);
+        auto ratio = [] (const juce::AudioBuffer<float>& x) { return db (rms (x, 48, 720) / rms (x, 14400, 28800)); };
+        expect (finite (b) && ratio (b) >= ratio (a) + 4.0, "PUNCH: the first 15 ms louder against the held part (" + juce::String (ratio (a), 1) + " -> " + juce::String (ratio (b), 1) + " dB)");
+        expect (std::abs (db (rms (b, 14400, 28800) / rms (a, 14400, 28800))) < 0.5, "PUNCH leaves the held part alone ("
+                + juce::String (db (rms (b, 14400, 28800) / rms (a, 14400, 28800)), 2) + " dB)");
+        // a second note over a held one: the gain bump does not click (sines, largest curve)
+        auto s0 = plain(); s0.oscAShape = 0.0f; auto s1 = s0; s1.punch = 1.0f;
+        const std::vector<Note> two { { 0.0, 1.2, 45 }, { 0.5, 1.2, 52 } };
+        expect (maxCurve (render (s1, two, 1.3)) < 2.5 * maxCurve (render (s0, two, 1.3)), "PUNCH on a second note does not click (largest curve "
+                + juce::String (maxCurve (render (s1, two, 1.3)), 5) + ", without " + juce::String (maxCurve (render (s0, two, 1.3)), 5) + ")");
     }
     // SHIFT: a small frequency shift makes the partials inharmonic.
     {

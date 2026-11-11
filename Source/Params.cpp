@@ -65,7 +65,7 @@ const juce::StringArray& allParamIds()
                                          id::lfoAmount, id::driveType, id::drive, id::chorus, id::delayMix, id::delayTime, id::delayFb,
                                          id::reverbMix, id::reverbSize, id::voiceMode, id::glide, id::width, id::master, id::velSens,
                                          id::bendRange, id::oversample, id::analog, id::warpMode, id::warp, id::ring,
-                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv };
+                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv, id::punch };
     return ids;
 }
 
@@ -135,6 +135,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     unit (l, id::grit, "Grit", d.grit);
     unit (l, id::smash, "Smash", d.smash);
     unit (l, id::shift, "Shift", d.shift);
+    unit (l, id::punch, "Punch", d.punch);   // 3.0 (2026-11-12)
     flt (l, id::morphEnv, "Morph Env", Range (-1.0f, 1.0f), d.morphEnv, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " %"; });
     return l;
 }
@@ -197,6 +198,7 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.grit = get (id::grit, p.grit);
     p.smash = get (id::smash, p.smash);
     p.shift = get (id::shift, p.shift);
+    p.punch = get (id::punch, p.punch);
     p.morphEnv = get (id::morphEnv, p.morphEnv);
     return p;
 }
