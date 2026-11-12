@@ -297,9 +297,12 @@ class Voice
 public:
     static constexpr int maxUnison = 7;
 
-    void prepare (double sampleRate) noexcept
+    // oversampling: the voice rate / the plug-in rate. Oscillators stay band-limited for the plug-in rate (their overtones
+    // end below its Nyquist frequency); the headroom above is for the overtones of WARP, GRIT, FM, RING and COMB.
+    void prepare (double sampleRate, double oversampling = 1.0) noexcept
     {
         sr = sampleRate;
+        blMul = oversampling;
         noiseNorm = std::sqrt (sr / 48000.0); // the same noise level per Hz (what is heard) at every rate
         WaveBank::get();                      // built once, here and not on the audio thread
         for (auto& c : comb) c.prepare ((int) (sr / 20.0) + 8);
@@ -407,7 +410,7 @@ public:
 
             const double incB = std::min (fBase * bRatio * std::exp2 (ana * noteCentsB / 1200.0) * dt, 0.45);
             phaseB += incB; phaseB -= std::floor (phaseB);
-            const double b = shapeWave (phaseB, incB, shapeB);
+            const double b = shapeWave (phaseB, incB * blMul, shapeB);
             const double fmNow = p.lfoTarget == LfoTarget::fm ? fmIdx * std::max (0.0, 1.0 + lfo * p.lfoAmount) : fmIdx;
             const double pm = fmNow * b / (2.0 * pi);
 
@@ -419,7 +422,7 @@ public:
                 double& ph = phase[(size_t) k];
                 ph += inc; ph -= std::floor (ph);
                 double pp = ph + pm; pp -= std::floor (pp);
-                const double a = warp > 0.0005 ? warped (pp, inc, shapeA, warp, p.warpMode, fA) : shapeWave (pp, inc, shapeA);
+                const double a = warp > 0.0005 ? warped (pp, inc * blMul, shapeA, warp, p.warpMode, fA, foldPrev[(size_t) k]) : shapeWave (pp, inc * blMul, shapeA);
                 l += a * panL[(size_t) k];
                 r += a * panR[(size_t) k];
             }
@@ -490,7 +493,7 @@ public:
 private:
     // WARP of OSC A: SYNC (a slave at 1..8x, reset by the note's phase), BEND (phase bent), PWM (a flat part inserted:
     // the hoover), FOLD (the wave folded; less on high notes, against aliasing).
-    static double warped (double pp, double inc, double shape, double w, WarpMode m, double freq) noexcept
+    static double warped (double pp, double inc, double shape, double w, WarpMode m, double freq, double& prev) noexcept
     {
         switch (m)
         {
@@ -516,7 +519,12 @@ private:
             case WarpMode::fold:
             {
                 const double g = 1.0 + 10.0 * w * std::min (1.0, 1500.0 / std::max (freq, 1.0));
-                return std::sin (0.5 * pi * (shapeWave (pp, inc, shape) * g + 0.35 * w));   // asymmetric: odd and even
+                // asymmetric: odd and even. 3.1: ADAA - the mean of sin (a x + c) over the step from the last sample
+                // (antiderivative -cos (a x + c) / a), not one point of it: the fold's overtones fold back far less.
+                const double a = 0.5 * pi * g, c = 0.5 * pi * 0.35 * w, x = shapeWave (pp, inc, shape), dx = x - prev;
+                const double y = std::abs (dx) > 1.0e-7 ? (std::cos (a * prev + c) - std::cos (a * x + c)) / (a * dx) : std::sin (a * 0.5 * (x + prev) + c);
+                prev = x;
+                return y;
             }
         }
         return shapeWave (pp, inc, shape);
@@ -540,12 +548,12 @@ private:
         return x;
     }
 
-    double sr = 48000.0;
+    double sr = 48000.0, blMul = 1.0;
     int note = 60;
     bool active = false, released = false, fading = false;
     double fade = 1.0, fadeStep = 0.0, age = 0.0;
     double logFreq = 0.0, targetLogFreq = 0.0, glideCoef = 0.0, velGain = 1.0;
-    std::array<double, maxUnison> phase {}, spreadCents {}, unisonCents {}, panL {}, panR {};
+    std::array<double, maxUnison> phase {}, spreadCents {}, unisonCents {}, panL {}, panR {}, foldPrev {};
     std::array<power_analog::Drift, maxUnison> unisonDrift;
     power_analog::Drift drift;
     double phaseB = 0.0, noteCents = 0.0, noteCentsB = 0.0, noteCut = 1.0;
@@ -559,6 +567,54 @@ private:
     std::array<double, 2> combLp {}, dcX {}, dcY {};
 };
 
+// 3.1 (2026-11-12): the voices run at twice the sample rate; this half-band FIR (97 taps, Kaiser beta 8, about -80 dB
+// above 26 kHz at 48 kHz) brings them back. WARP, GRIT, FM, RING and COMB are non-linear: at the base rate their
+// overtones above the Nyquist frequency folded back between the harmonics (1-5 % of the energy at A6, the "cheap" grit).
+// Group delay 48 samples at 2x = 24 at the base rate (reported as latency).
+struct Decimator2x
+{
+    static constexpr int taps = 97, latencyBase = 24;
+    std::array<double, taps> h {};
+    std::array<std::array<double, 256>, 2> hist {};
+    int pos = 0;
+    Decimator2x()
+    {
+        auto i0 = [] (double x) { double s = 1.0, t = 1.0; for (int k = 1; k < 30; ++k) { t *= (x / (2.0 * k)) * (x / (2.0 * k)); s += t; } return s; };
+        const double beta = 8.0, m = (taps - 1) / 2.0;
+        double sum = 0.0;
+        for (int k = 0; k < taps; ++k)
+        {
+            const double d = k - m, w = i0 (beta * std::sqrt (std::max (0.0, 1.0 - (d / m) * (d / m)))) / i0 (beta);
+            h[(size_t) k] = (d == 0.0 ? 0.5 : std::sin (juce::MathConstants<double>::pi * 0.5 * d) / (juce::MathConstants<double>::pi * d)) * w;
+            sum += h[(size_t) k];
+        }
+        for (auto& v : h) v /= sum;
+    }
+    void reset() { for (auto& c : hist) c.fill (0.0); pos = 0; }
+    // in: 2n samples per channel at the doubled rate; out: n samples
+    void process (const float* inL, const float* inR, float* outL, float* outR, int n) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            for (int k = 0; k < 2; ++k)
+            {
+                pos = (pos + 1) & 255;
+                hist[0][(size_t) pos] = inL[2 * i + k]; hist[1][(size_t) pos] = inR[2 * i + k];
+            }
+            double a = 0.0, b = 0.0;
+            for (int k = 0; k < taps; ++k)
+            {
+                if ((k & 1) == 1 || k == (taps - 1) / 2)   // half-band: the taps an even distance from the centre (48) are zero
+                {
+                    const size_t j = (size_t) ((pos - k) & 255);
+                    a += h[(size_t) k] * hist[0][j]; b += h[(size_t) k] * hist[1][j];
+                }
+            }
+            outL[i] = (float) a; outR[i] = (float) b;
+        }
+    }
+};
+
 class SynthEngine
 {
 public:
@@ -568,9 +624,11 @@ public:
     {
         sr = sampleRate;
         blockMax = std::max (32, maxBlock);
-        for (auto& v : voices) v.prepare (sr);
-        lfoBuf.assign ((size_t) blockMax, 0.0f);
-        anaBuf.assign ((size_t) blockMax, 0.0f);
+        for (auto& v : voices) v.prepare (2.0 * sr, 2.0);   // 3.1: the voices at twice the rate
+        lfoBuf.assign ((size_t) blockMax * 2, 0.0f);
+        anaBuf.assign ((size_t) blockMax * 2, 0.0f);
+        voiceL.assign ((size_t) blockMax * 2, 0.0f);
+        voiceR.assign ((size_t) blockMax * 2, 0.0f);
         mixL.assign ((size_t) blockMax, 0.0f);
         mixR.assign ((size_t) blockMax, 0.0f);
         for (int i = 0; i < 3; ++i)
@@ -592,6 +650,7 @@ public:
         anaBlend.prepare (sr); anaBlendPost.prepare (sr);
         lfoSlew = 1.0 - std::exp (-1.0 / (0.002 * sr));
         smooth = 1.0 - std::exp (-1.0 / (0.02 * sr));
+        monoK = 1.0 - std::exp (-1.0 / (0.03 * sr)); monoKFast = 1.0 - std::exp (-1.0 / (0.005 * sr)); monoKSlow = 1.0 - std::exp (-1.0 / (0.15 * sr));
         held.reserve (128); // at most 128 distinct notes: push_back never allocates on the audio thread
         activeOs = p.oversampleIndex;
         reset();
@@ -602,6 +661,7 @@ public:
         for (auto& v : voices) v.reset();
         for (auto& o : os) if (o) o->reset();
         chorusFx.reset(); reverbFx.reset(); smashFx.reset(); for (auto& sh : shifter) sh.reset();
+        decim.reset(); foldPrev.fill (0.0); monoEM = monoES = 0.0; monoG = 1.0;
         std::fill (delayL.begin(), delayL.end(), 0.0f);
         std::fill (delayR.begin(), delayR.end(), 0.0f);
         delayPos = 0; dampL = dampR = 0.0;
@@ -616,7 +676,7 @@ public:
     int getLatencySamplesFor (int index) const noexcept
     {
         const auto& o = os[(size_t) juce::jlimit (0, 2, index)];
-        return o ? (int) std::round (o->getLatencyInSamples()) : 0;
+        return (o ? (int) std::round (o->getLatencyInSamples()) : 0) + Decimator2x::latencyBase;
     }
     int getLatencySamples() const noexcept { return getLatencySamplesFor (activeOs); }
 
@@ -765,10 +825,17 @@ private:
     void renderChunk (float* outL, float* outR, int n, const SynthParams& p)
     {
         auto* L = mixL.data(); auto* R = mixR.data();
-        std::fill (L, L + n, 0.0f); std::fill (R, R + n, 0.0f);
-        for (int i = 0; i < n; ++i) { lfoBuf[(size_t) i] = (float) lfoTick (p); anaBuf[(size_t) i] = (float) anaBlend.tick (p.analog); }
+        auto* VL = voiceL.data(); auto* VR = voiceR.data();
+        std::fill (VL, VL + 2 * n, 0.0f); std::fill (VR, VR + 2 * n, 0.0f);
+        for (int i = 0; i < n; ++i)   // LFO and ANALOGUE at the base rate (both are slewed), held for the two voice samples
+        {
+            const float lv = (float) lfoTick (p), av = (float) anaBlend.tick (p.analog);
+            lfoBuf[(size_t) (2 * i)] = lfoBuf[(size_t) (2 * i + 1)] = lv;
+            anaBuf[(size_t) (2 * i)] = anaBuf[(size_t) (2 * i + 1)] = av;
+        }
         Control c { lfoBuf.data(), anaBuf.data(), bendSemis };
-        for (auto& v : voices) v.render (L, R, n, p, c, anaRand);
+        for (auto& v : voices) v.render (VL, VR, 2 * n, p, c, anaRand);
+        decim.process (VL, VR, L, R, n);
 
         // SHIFT: a small frequency shift before the drive (stabs sound less like a plug-in, more like a machine)
         if (p.shift > 0.001f)
@@ -799,7 +866,17 @@ private:
                     gd += (target - gd) * smooth * n / upN;
                     const double wet = std::min (1.0, gd * 4.0);
                     const double x = u[i] * 0.7;
-                    u[i] = (float) ((x + wet * (driveShape (x, g, p.driveType) * norm * 0.8 - x)) / 0.7);
+                    double shaped;
+                    if (p.driveType == DriveType::fold)
+                    {
+                        // 3.1: first-order antiderivative anti-aliasing (ADAA) of sin (1.3 v): the mean of the curve over the
+                        // step from the last sample, not one point of it. FOLD at full drive folded back 5 % of the energy.
+                        const double v = x * g, v0 = foldPrev[(size_t) c2], dv = v - v0;
+                        shaped = std::abs (dv) > 1.0e-6 ? (std::cos (1.3 * v0) - std::cos (1.3 * v)) / (1.3 * dv) : std::sin (1.3 * 0.5 * (v + v0));
+                        foldPrev[(size_t) c2] = v;
+                    }
+                    else shaped = driveShape (x, g, p.driveType);
+                    u[i] = (float) ((x + wet * (shaped * norm * 0.8 - x)) / 0.7);
                 }
                 if (c2 == 1) gDrive = gd;
             }
@@ -888,7 +965,13 @@ private:
         {
             gWidth = gWidth < 0.0 ? p.width : gWidth + (p.width - gWidth) * smooth;
             const double m = 0.5 * (L[i] + R[i]);
-            const double s = sideHp.tick (0.5 * (L[i] - R[i])).high * (0.4 + 1.2 * gWidth);
+            double s = sideHp.tick (0.5 * (L[i] - R[i])).high * (0.4 + 1.2 * gWidth);
+            // MONO GUARD (3.1): the side's energy held to 0.6 of the mid's (mono at most -2 dB). WIDTH up to 1.6x on wide
+            // unison and noise made the side louder than the mid: 4-13 dB lost in mono (clubs).
+            monoEM += monoK * (m * m - monoEM); monoES += monoK * (s * s - monoES);
+            const double gs = std::min (1.0, std::sqrt (0.6 * monoEM / (monoES + 1.0e-12)));
+            monoG += (gs < monoG ? monoKFast : monoKSlow) * (gs - monoG);
+            s *= monoG;
             double l = m + s, r = m - s;
             const double a = anaBlendPost.tick (p.analog);
             const double tl = topL.tick (l), tr = topR.tick (r);
@@ -916,7 +999,10 @@ private:
     std::array<Shifter, 2> shifter;
     Smash smashFx;
     std::vector<int> held;
-    std::vector<float> lfoBuf, anaBuf, mixL, mixR, delayL, delayR;
+    std::vector<float> lfoBuf, anaBuf, mixL, mixR, voiceL, voiceR, delayL, delayR;
+    Decimator2x decim;
+    std::array<double, 2> foldPrev {};
+    double monoEM = 0.0, monoES = 0.0, monoG = 1.0, monoK = 0.001, monoKFast = 0.01, monoKSlow = 0.001;
     double lfoPhase = 0.0, lfoValue = 0.0, lfoHeld = 0.0, lfoSlew = 0.1, smooth = 0.001;
     Rng lfoRand;
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 3> os;

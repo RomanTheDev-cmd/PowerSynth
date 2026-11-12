@@ -7,6 +7,10 @@
   python3 fit_synth.py power OUT.json      3.0: every preset re-fitted to its own reference on the 3.0 engine (new SMASH,
                                           PUNCH), with the power terms: not sparser than the reference, a held note
                                           dense and at once there (then apply-refit)
+  python3 fit_synth.py grow OUT.json       3.1: new presets on references no preset uses yet (k-medoids per category with the
+                                          used ones fixed: the new ones go where the library has nothing), fitted with
+                                          the 3.0 power terms from several presets of the category (then apply-grow)
+  python3 fit_synth.py apply-grow FIT.json  inserts them after the last preset of their category
   python3 fit_synth.py audit               distance of every factory preset to the nearest reference of its category
 
 Only feature numbers of the references are used; no reference audio ends up in PowerSynth. MASTER is fixed while
@@ -474,6 +478,77 @@ def extend(out_path):
     print("median distance %.2f -> %.2f, %d presets in %.0f s" % (b[len(b) // 2], a[len(a) // 2], len(out), time.time() - t0))
 
 
+# 3.1 (2026-11-12, Roman: "at least 300 presets in every plug-in, and varied"): new presets per category. Pads: all 14
+# pad references are taken already - a new pad would repeat one, so none are added.
+GROW = {"Leads": 55, "Rave & Hoover": 25, "Acid": 10, "Textures": 15, "Atmospheres": 25, "Stabs": 50, "Arps & Plucks": 40}
+ROMAN = ["", " II", " III", " IV", " V", " VI", " VII", " VIII", " IX", " X", " XI", " XII", " XIII", " XIV", " XV"]
+
+
+def library_entries():
+    out = []
+    for line in open(INC, encoding="utf-8"):
+        m = ENTRY.match(line)
+        if m:
+            vals = {k: float(v.rstrip("f")) for k, v in re.findall(r'\{"([^"]+)",(-?[\d.e+]+f?)\}', m.group(3))}
+            t = re.search(r" to (.+?\.wav)", line)
+            out.append({"name": m.group(1), "cat": m.group(2), "group": m.group(4), "params": vals, "target": t.group(1) if t else None})
+    return out
+
+
+def grow(out_path):
+    global POWER
+    POWER = True
+    refs = pickle.load(open(os.path.join(HERE, "..", "Референсы", "synth_features.pkl"), "rb"))
+    lib = library_entries()
+    names = {e["name"] for e in lib}
+    rng = np.random.default_rng(31)
+    jobs, meta = [], []
+    for cat, n_new in GROW.items():
+        pool = pool_of(refs, cat)
+        used = {e["target"] for e in lib if e["cat"] in (cat, "Atmospheres" if cat == "Textures" else cat) and e["target"]}
+        fixed = [i for i, x in enumerate(pool) if x["file"].split("/")[-1] in used]
+        k = min(len(pool), len(fixed) + n_new)
+        meds = [i for i in kmedoids([x["feat"] for x in pool], k, fixed=fixed) if i not in fixed]
+        mine = [e["params"] for e in lib if e["cat"] == cat]
+        other = [e["params"] for e in lib if e["cat"] != cat]
+        print(cat, "pool", len(pool), "used", len(fixed), "new", len(meds), flush=True)
+        for i in meds:
+            ref = pool[i]
+            stem = ref.get("stem", cat.split()[0])
+            j = 0
+            while stem + ROMAN[min(j, len(ROMAN) - 1)] + ("" if j < len(ROMAN) else " %d" % j) in names: j += 1
+            name = stem + ROMAN[min(j, len(ROMAN) - 1)] + ("" if j < len(ROMAN) else " %d" % j)
+            names.add(name)
+            starts = [mine[q] for q in rng.choice(len(mine), min(6, len(mine)), replace=False)] + [other[q] for q in rng.choice(len(other), 2, replace=False)]
+            jobs.append((ref, cat, starts, 5000 + len(jobs), int(os.environ.get("FIT_ITERS", 30))))
+            meta.append((name, cat, ref))
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=int(os.environ.get("FIT_WORKERS", 9)), initializer=_power_on) as ex:
+        results = list(ex.map(fit_one, jobs, chunksize=1))
+    out = []
+    for (name, cat, ref), (p, c, parts) in zip(meta, results):
+        out.append({"name": name, "category": cat, "target": ref["file"].split("/")[-1], "params": p, "distance": c, "parts": parts})
+    json.dump(out, open(out_path, "w"), indent=1, ensure_ascii=False)
+    a = sorted(o["distance"] for o in out)
+    print("median distance %.2f, %d presets in %.0f s" % (a[len(a) // 2], len(out), time.time() - t0))
+
+
+def apply_grow(fit_path):
+    fits = json.load(open(fit_path, encoding="utf-8"))
+    lines = open(INC, encoding="utf-8").read().split("\n")
+    for f in fits:
+        p = finish(f["name"], {k: v for k, v in f["params"].items() if k != "master"})
+        p["master"] = -12.0
+        body = ",".join('{"%s",%s}' % (k, lit(k, p[k])) for k in sorted(p))
+        line = '{ "%s", "%s", { %s }, "%s" }, // fit %.1f to %s (3.1 grow)' % (f["name"], f["category"], body, group_of(p), f["distance"], f["target"])
+        last = max((i for i, l in enumerate(lines) if (m := ENTRY.match(l)) and m.group(2) == f["category"]), default=None)
+        if last is None:
+            raise SystemExit("no category " + f["category"])
+        lines.insert(last + 1, line)
+    open(INC, "w", encoding="utf-8").write("\n".join(lines))
+    print("inserted:", len(fits))
+
+
 BEATS = [4, 2, 1, 0.5, 0.25, 0.125, 2 / 3, 1 / 3, 0.75]
 
 
@@ -512,4 +587,5 @@ def apply_refit(fit_path):
 if __name__ == "__main__":
     {"fit": lambda: fit(sys.argv[2]), "apply": lambda: apply(sys.argv[2]), "audit": audit, "refit": lambda: refit(sys.argv[2]),
      "extend": lambda: extend(sys.argv[2]), "power": lambda: power(sys.argv[2]),
+     "grow": lambda: grow(sys.argv[2]), "apply-grow": lambda: apply_grow(sys.argv[2]),
      "apply-refit": lambda: apply_refit(sys.argv[2])}[sys.argv[1]]()

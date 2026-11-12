@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # macOS (27.0), so they would not load on older Macs (found 2026-10-23). arm64 slices start at 11.0 anyway.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS")
 
-project(PowerSynth VERSION 3.0.0 LANGUAGES C CXX)
+project(PowerSynth VERSION 3.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

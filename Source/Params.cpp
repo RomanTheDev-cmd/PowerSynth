@@ -65,7 +65,8 @@ const juce::StringArray& allParamIds()
                                          id::lfoAmount, id::driveType, id::drive, id::chorus, id::delayMix, id::delayTime, id::delayFb,
                                          id::reverbMix, id::reverbSize, id::voiceMode, id::glide, id::width, id::master, id::velSens,
                                          id::bendRange, id::oversample, id::analog, id::warpMode, id::warp, id::ring,
-                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv, id::punch };
+                                         id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv, id::punch,
+                                         id::scAmount, id::scRate, id::scShape, id::scSource };
     return ids;
 }
 
@@ -136,6 +137,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     unit (l, id::smash, "Smash", d.smash);
     unit (l, id::shift, "Shift", d.shift);
     unit (l, id::punch, "Punch", d.punch);   // 3.0 (2026-11-12)
+    unit (l, id::scAmount, "Sidechain", d.scAmount);   // 3.1: SIDECHAIN, off by default (old projects unchanged)
+    choice (l, id::scRate, "Sidechain Rate", { "1/4", "1/8", "1/2" }, d.scRate);
+    choice (l, id::scShape, "Sidechain Curve", { "Classic", "Short", "Long", "Hard" }, d.scShape);
+    choice (l, id::scSource, "Sidechain Source", { "Tempo", "Kick" }, d.scSource);
     flt (l, id::morphEnv, "Morph Env", Range (-1.0f, 1.0f), d.morphEnv, [] (float v, int) { return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " %"; });
     return l;
 }
@@ -199,6 +204,10 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.smash = get (id::smash, p.smash);
     p.shift = get (id::shift, p.shift);
     p.punch = get (id::punch, p.punch);
+    p.scAmount = get (id::scAmount, p.scAmount);
+    p.scRate = juce::jlimit (0, 2, i (id::scRate, p.scRate));
+    p.scShape = juce::jlimit (0, 3, i (id::scShape, p.scShape));
+    p.scSource = juce::jlimit (0, 1, i (id::scSource, p.scSource));
     p.morphEnv = get (id::morphEnv, p.morphEnv);
     return p;
 }

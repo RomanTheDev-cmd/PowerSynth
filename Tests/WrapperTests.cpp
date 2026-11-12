@@ -231,6 +231,7 @@ void testProcessing()
     // Mono output bus.
     PowerSynthProcessor mono;
     juce::AudioProcessor::BusesLayout layout;
+    layout.inputBuses.add (juce::AudioChannelSet::stereo());   // 3.1: the sidechain input is part of every layout
     layout.outputBuses.add (juce::AudioChannelSet::mono());
     expect (mono.setBusesLayout (layout), "a mono output bus is accepted");
     mono.prepareToPlay (48000.0, 512);
@@ -241,6 +242,68 @@ void testProcessing()
     mono.processBlock (mb, mm);
     expect (mb.getMagnitude (0, 0, 512) > 0.0f, "the mono bus plays");
     expect (p.getLatencySamples() >= 0, "latency reported");
+}
+
+// SIDECHAIN (3.1) through the processor: TEMPO by the play head, KICK by the kick on the sidechain input; the input is
+// never passed through; a preset keeps the sidechain.
+struct TestHead : juce::AudioPlayHead
+{
+    double ppq = 0.0; bool playing = true;
+    juce::Optional<PositionInfo> getPosition() const override { PositionInfo i; i.setIsPlaying (playing); i.setBpm (120.0); i.setPpqPosition (ppq); return i; }
+};
+void testSidechain()
+{
+    auto run = [] (float amount, int source, bool kick)
+    {
+        PowerSynthProcessor p;
+        p.prepareToPlay (48000.0, 512);
+        setPlain (p, ps::id::sustain, 1.0f); setPlain (p, ps::id::reverbMix, 0.0f); setPlain (p, ps::id::delayMix, 0.0f);
+        setPlain (p, ps::id::lfoAmount, 0.0f); setPlain (p, ps::id::scAmount, amount); setPlain (p, ps::id::scSource, (float) source);
+        TestHead head; p.setPlayHead (&head);
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 200; ++b)
+        {
+            head.ppq = b * 512 / 48000.0 * 2.0;
+            juce::MidiBuffer midi;
+            if (b == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 48, 0.9f), 0);
+            for (int i = 0; i < 512; ++i)
+            {
+                const int since = b * 512 + i - 72000;   // a kick at 1.5 s, off the beat
+                const float k = kick && since >= 0 && since < 12000 ? (float) (0.9 * std::exp (-since / 2880.0) * std::sin (2.0 * juce::MathConstants<double>::pi * 60.0 * since / 48000.0)) : 0.0f;
+                buf.setSample (0, i, k); buf.setSample (1, i, k);
+            }
+            p.processBlock (buf, midi);
+            for (int i = 0; i < 512; ++i) out.push_back (std::abs (buf.getSample (0, i)) + std::abs (buf.getSample (1, i)));
+        }
+        p.setPlayHead (nullptr);
+        return std::make_pair (out, p.getLatencySamples());
+    };
+    auto level = [] (const std::vector<float>& x, int from, int len) { double e = 0; for (int i = from; i < from + len; ++i) e += (double) x[(size_t) i] * x[(size_t) i]; return 10.0 * std::log10 (e / len + 1e-20); };
+    const auto [dry, lat] = run (0.0f, 0, false);
+    const auto [tempo, lat1] = run (1.0f, 0, false);
+    const auto [kick, lat2] = run (1.0f, 1, true);
+    juce::ignoreUnused (lat1, lat2);
+    const int beat = 48000 + lat;   // beat 3 (ppq 2)
+    expect (level (tempo, beat + 96, 384) < level (dry, beat + 96, 384) - 20.0, "SIDECHAIN TEMPO ducks after the beat");
+    expect (std::abs (level (tempo, beat + 19000, 2000) - level (dry, beat + 19000, 2000)) < 1.0, "SIDECHAIN TEMPO is back before the next beat");
+    const int hit = 72000 + lat;
+    expect (level (kick, hit + 480, 480) < level (dry, hit + 480, 480) - 20.0, "SIDECHAIN KICK ducks after the kick on the input ("
+            + juce::String (level (kick, hit + 480, 480) - level (dry, hit + 480, 480), 1) + " dB)");
+    expect (std::abs (level (kick, beat + 96, 384) - level (dry, beat + 96, 384)) < 1.0, "SIDECHAIN KICK does not duck on a beat without a kick");
+    PowerSynthProcessor q; q.prepareToPlay (48000.0, 512);
+    juce::AudioBuffer<float> buf (2, 512);
+    double leak = 0.0;
+    for (int b = 0; b < 10; ++b)
+    {
+        for (int i = 0; i < 512; ++i) { buf.setSample (0, i, 0.5f); buf.setSample (1, i, -0.5f); }
+        juce::MidiBuffer none; q.processBlock (buf, none);
+        leak = std::max (leak, (double) buf.getMagnitude (0, 512));
+    }
+    expect (leak < 1.0e-6, "the sidechain input never reaches the output");
+    setPlain (q, ps::id::scAmount, 0.7f); setPlain (q, ps::id::scSource, 1.0f);
+    q.loadPreset (5);
+    expect (std::abs (plain (q, ps::id::scAmount) - 0.7f) < 1.0e-3 && plain (q, ps::id::scSource) > 0.5f, "loading a preset keeps the SIDECHAIN settings");
 }
 
 void testEditor()
@@ -325,6 +388,7 @@ int main (int argc, char** argv)
     testPresets();
     testFavourites();
     testProcessing();
+    testSidechain();
 #if JUCE_MAC || JUCE_WINDOWS
     testEditor();
     testFavouritesInEditor();

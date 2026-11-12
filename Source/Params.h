@@ -69,6 +69,11 @@ namespace id
     inline constexpr const char* smash      = "smash";
     inline constexpr const char* shift      = "shift";
     inline constexpr const char* punch      = "punch";
+    // SIDECHAIN (3.1, 2026-11-12), as in PowerBass 1.3: an instance setting, like OVERSAMPLE
+    inline constexpr const char* scAmount   = "scAmount";
+    inline constexpr const char* scRate     = "scRate";
+    inline constexpr const char* scShape    = "scShape";
+    inline constexpr const char* scSource   = "scSource";
     inline constexpr const char* morphEnv   = "morphEnv";
 }
 
@@ -145,6 +150,8 @@ struct SynthParams
     float smash = 0.0f;           // 3-band upward + downward compression (OTT-like density)
     float shift = 0.0f;           // a small frequency shift before the drive
     float punch = 0.0f;           // 3.0: the start of every note up to 6 dB louder for about 25 ms, after the drive
+    float scAmount = 0.0f;        // SIDECHAIN depth (0 = off)
+    int scRate = 0, scShape = 0, scSource = 0;   // 1/4 1/8 1/2; CLASSIC SHORT LONG HARD; TEMPO KICK
     float morphEnv = 0.0f;        // -1..1: the filter envelope moves SHAPE (3 positions at full) and WARP
     double bpm = 120.0;           // host tempo (not a parameter; set by the processor)
 };

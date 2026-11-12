@@ -4,6 +4,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "DSP/SynthEngine.h"
+#include "DSP/Ducker.h"
 #include "Presets.h"
 
 class PowerSynthProcessor : public juce::AudioProcessor
@@ -62,6 +63,13 @@ private:
     int previewSamplesLeft = 0;
     double preparedRate = 48000.0;
     juce::AudioBuffer<float> monoScratch;
+    ps::dsp::Ducker ducker;   // SIDECHAIN (3.1): by the song's beat or by the kick on the sidechain input
+    juce::AudioBuffer<float> scScratch;
+    bool scConnected = false;
+    struct Vst3Extensions : juce::VST3ClientExtensions { bool getPluginHasMainInput() const override { return false; } } vst3Extensions;
+public:
+    juce::VST3ClientExtensions* getVST3ClientExtensions() override { return &vst3Extensions; }
+private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PowerSynthProcessor)
 };

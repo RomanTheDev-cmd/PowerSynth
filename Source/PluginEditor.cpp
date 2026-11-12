@@ -345,6 +345,9 @@ void Meter::paint (juce::Graphics& g)
 //==============================================================================
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s)
     : oversample (s, ps::id::oversample, { "2x", "4x", "8x" }, juce::String::fromUTF8 ("Передискретизация дисторшна: выше — чище верх, больше нагрузка")),
+      scSource (s, ps::id::scSource, { "TEMPO", "KICK" }, juce::String::fromUTF8 ("TEMPO — провал на долю песни, без подключений. KICK — на каждый удар бочки, поданной на вход сайдчейна (в Logic: Side Chain вверху окна плагина): и роллы, и сбивки")),
+      scRate (s, ps::id::scRate, { "1/4", "1/8", "1/2" }, juce::String::fromUTF8 ("Длина провала: доля, восьмая или две доли")),
+      scShape (s, ps::id::scShape, { "CLASSIC", "SHORT", "LONG", "HARD" }, juce::String::fromUTF8 ("Кривая: CLASSIC — быстрый провал и плавный возврат; SHORT — место только под атаку бочки; LONG — качает вся доля; HARD — тишина дольше, как гейт")),
       fltAttack (s, ps::id::fltAttack, "F ATTACK", juce::String::fromUTF8 ("Атака огибающей фильтра")),
       fltSustain (s, ps::id::fltSustain, "F SUSTAIN", juce::String::fromUTF8 ("Удержание огибающей фильтра")),
       fltRelease (s, ps::id::fltRelease, "F RELEASE", juce::String::fromUTF8 ("Затухание огибающей фильтра")),
@@ -355,7 +358,7 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s)
       bend (s, ps::id::bendRange, "BEND", juce::String::fromUTF8 ("Диапазон питч-бенда в полутонах")),
       oscBFine (s, ps::id::oscBFine, "B FINE", juce::String::fromUTF8 ("Тонкая подстройка OSC B в центах (биения, ширина)"))
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &oversample, &fltAttack, &fltSustain, &fltRelease, &delayTime, &delayFb,
+    for (auto* c : std::initializer_list<juce::Component*> { &oversample, &scSource, &scRate, &scShape, &fltAttack, &fltSustain, &fltRelease, &delayTime, &delayFb,
                                                              &reverbSize, &velSens, &bend, &oscBFine })
         addAndMakeVisible (c);
 }
@@ -376,6 +379,9 @@ void AdvancedPanel::paint (juce::Graphics& g)
     auto t = getLocalBounds().reduced (S (16), S (10));
     g.drawText ("ADVANCED", t.removeFromTop (S (16)), juce::Justification::centredLeft);
     g.drawText ("DRIVE OVERSAMPLING", juce::Rectangle<int> (S (16), S (34), S (170), S (14)), juce::Justification::centredLeft);
+    g.drawText ("SIDECHAIN", juce::Rectangle<int> (S (16), S (240), S (130), S (14)), juce::Justification::centredLeft);
+    g.drawText ("LENGTH", juce::Rectangle<int> (S (172), S (240), S (130), S (14)), juce::Justification::centredLeft);
+    g.drawText ("CURVE", juce::Rectangle<int> (S (330), S (240), S (200), S (14)), juce::Justification::centredLeft);
 }
 
 void AdvancedPanel::resized()
@@ -383,7 +389,10 @@ void AdvancedPanel::resized()
     const float s = getWidth() / 640.0f;
     auto S = [s] (float v) { return juce::roundToInt (v * s); };
     oversample.setBounds (S (14), S (50), S (160), S (26));
-    auto r = getLocalBounds().withTrimmedLeft (S (190)).reduced (S (6), S (24));
+    scSource.setBounds (S (14), S (256), S (142), S (26));
+    scRate.setBounds (S (170), S (256), S (144), S (26));
+    scShape.setBounds (S (328), S (256), S (298), S (26));
+    auto r = getLocalBounds().withTrimmedLeft (S (190)).withTrimmedBottom (S (60)).reduced (S (6), S (24));
     const int rowH = r.getHeight() / 2, w = r.getWidth() / 5;
     auto top = r.removeFromTop (rowH), bottom = r;
     for (auto* k : { &fltAttack, &fltSustain, &fltRelease, &velSens, &oscBFine }) k->setBounds (top.removeFromLeft (w));
@@ -913,6 +922,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       width (p.state, ps::id::width, "WIDTH", juce::String::fromUTF8 ("Ширина стерео; ниже 150 Гц остаётся моно")),
       smash (p.state, ps::id::smash, "SMASH", juce::String::fromUTF8 ("Трёхполосное выравнивание перед дисторшном: слабые полосы подтягиваются к громкости самой ноты, главная прижимается — яркость и плотность без подъёма шума и хвостов")),
       shift (p.state, ps::id::shift, "SHIFT", juce::String::fromUTF8 ("Небольшой сдвиг частоты перед дисторшном: призвуки становятся нетональными — звук машины, а не плагина")),
+      sidechain (p.state, ps::id::scAmount, "S.CHAIN", juce::String::fromUTF8 ("Сайдчейн как Kickstart 2: громкость проваливается на каждую долю песни (или на каждый удар бочки на входе сайдчейна — ADVANCED → KICK) и возвращается по кривой. 0 — выключен")),
       master (p.state, ps::id::master, "MASTER", juce::String::fromUTF8 ("Громкость на выходе")),
       filterMode (p.state, ps::id::filterMode, { "LP24", "LP12", "BP", "HP", "COMB" }, juce::String::fromUTF8 ("Режим фильтра; COMB — гребёнка по высоте ноты: металл и индустриальный звон")),
       driveType (p.state, ps::id::driveType, { "SAT", "CLIP", "FOLD", "CRUSH" }, juce::String::fromUTF8 ("Тип дисторшна")),
@@ -934,7 +944,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     for (auto* c : std::initializer_list<juce::Component*> {
              &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
              &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime, &punch,
-             &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &master, &filterMode, &driveType,
+             &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &sidechain, &master, &filterMode, &driveType,
              &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
              &previewButton, &favouriteButton })
@@ -1154,9 +1164,9 @@ void PowerSynthEditor::resized()
         return inner;
     };
     // The primary knob on the left, the others in a grid on the right.
-    auto primaryAndGrid = [&] (juce::Rectangle<int> a, Knob& main, std::initializer_list<Knob*> others, int cols)
+    auto primaryAndGrid = [&] (juce::Rectangle<int> a, Knob& main, std::initializer_list<Knob*> others, int cols, int mainPct = 46)
     {
-        main.setBounds (a.removeFromLeft (a.getWidth() * 46 / 100));
+        main.setBounds (a.removeFromLeft (a.getWidth() * mainPct / 100));
         a.removeFromLeft (S (6));
         const int n = (int) others.size(), rows = std::max (1, (n + cols - 1) / cols), rowGap = S (8);
         const int cw = a.getWidth() / cols, rh = (a.getHeight() - rowGap * (rows - 1)) / rows;
@@ -1209,9 +1219,9 @@ void PowerSynthEditor::resized()
     auto fx = b[2];
     driveType.setBounds (fx.removeFromTop (S (26)));
     fx.removeFromTop (S (8));
-    primaryAndGrid (fx, drive, { &chorus, &delayMix, &reverbMix, &width, &smash, &shift }, 3);
+    primaryAndGrid (fx, drive, { &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &sidechain }, 4, 30);   // 3.1: room for SIDECHAIN
 
-    advanced.setBounds (getWidth() - S (24) - S (640), S (64), S (640), S (250));
+    advanced.setBounds (getWidth() - S (24) - S (640), S (64), S (640), S (300));
     browser.setBounds (getLocalBounds().withTrimmedTop (S (60)).reduced (S (24), S (14)));
 }
 

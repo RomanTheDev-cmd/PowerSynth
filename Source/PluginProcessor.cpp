@@ -2,7 +2,9 @@
 #include "PluginEditor.h"
 
 PowerSynthProcessor::PowerSynthProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    // 3.1: a sidechain input (the kick, for SIDECHAIN KICK); auxiliary for VST3 hosts (see vst3Extensions)
+    : AudioProcessor (BusesProperties().withInput ("Sidechain", juce::AudioChannelSet::stereo(), true)
+                                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       state (*this, nullptr, "PowerSynth", ps::createLayout())
 {
     if (const int i = library.indexOf (getPresetName()); i >= 0)
@@ -12,7 +14,9 @@ PowerSynthProcessor::PowerSynthProcessor()
 bool PowerSynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto out = layouts.getMainOutputChannelSet();
-    return out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono();
+    const auto sc = layouts.getMainInputChannelSet();
+    return (out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono())
+        && (sc.isDisabled() || sc == juce::AudioChannelSet::stereo() || sc == juce::AudioChannelSet::mono());
 }
 
 void PowerSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -21,6 +25,8 @@ void PowerSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     preparedRate = sampleRate; // not getSampleRate(): it is only valid if the host set it first
     engine.prepare (sampleRate, std::max (32, std::min (samplesPerBlock, 1024)), ps::readParams (state));
     monoScratch.setSize (1, std::max (512, samplesPerBlock));
+    ducker.prepare (sampleRate);
+    scScratch.setSize (2, std::max (512, samplesPerBlock));
     for (int i = 0; i < 3; ++i)
         latencyByOversampling[(size_t) i] = engine.getLatencySamplesFor (i);
     reportedLatency = engine.getLatencySamples();
@@ -29,6 +35,7 @@ void PowerSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 void PowerSynthProcessor::reset()
 {
+    ducker.reset();
     // AU Reset can replace the final MIDI note-off. Clear voices AND filter/delay tails.
     engine.reset();
     previewSamplesLeft = 0;
@@ -65,6 +72,20 @@ void PowerSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         if (const auto pos = ph->getPosition())
             if (const auto bpm = pos->getBpm())
                 params.bpm = *bpm;
+    // The sidechain arrives in the same buffer the synth is written to: kept aside first, then the output cleared.
+    {
+        const int scCh = getBusCount (true) > 0 && getBus (true, 0)->isEnabled()
+                             ? juce::jlimit (0, 2, std::min (getChannelCountOfBus (true, 0), buffer.getNumChannels())) : 0;
+        const int m = std::min (n, scScratch.getNumSamples());
+        scConnected = scCh > 0 && scScratch.getNumChannels() == 2 && m > 0;
+        if (scScratch.getNumChannels() == 2 && m > 0)
+            for (int c = 0; c < 2; ++c)
+            {
+                if (scConnected) scScratch.copyFrom (c, 0, buffer, std::min (c, scCh - 1), 0, m);
+                else scScratch.clear (c, 0, m);
+            }
+        for (int c = 0; c < buffer.getNumChannels(); ++c) buffer.clear (c, 0, n);
+    }
     float* l = buffer.getWritePointer (0);
     float* r = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
     if (r != nullptr)
@@ -80,6 +101,28 @@ void PowerSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         }
     for (int c = 2; c < buffer.getNumChannels(); ++c)
         buffer.clear (c, 0, n);
+
+    // SIDECHAIN: TEMPO - by the host's song position of the sound leaving now (the latency earlier); KICK - every hit of
+    // the kick on the sidechain input (delayed by the latency inside the ducker).
+    if (params.scSource == 1)
+    {
+        const int m = scScratch.getNumChannels() == 2 ? std::min (n, scScratch.getNumSamples()) : 0;
+        ducker.processKick (l, r, m, scConnected ? scScratch.getReadPointer (0) : nullptr, scConnected ? scScratch.getReadPointer (1) : nullptr,
+                            std::max (0, engine.getLatencySamples()), params.bpm, params.scAmount, params.scRate, params.scShape);
+    }
+    else if (params.scAmount > 0.0f || ! ducker.isIdle())
+    {
+        double ppq = 0.0;
+        bool playing = false;
+        if (auto* ph = getPlayHead())
+            if (const auto pos = ph->getPosition())
+            {
+                playing = pos->getIsPlaying();
+                if (const auto q = pos->getPpqPosition()) ppq = *q; else playing = false;
+            }
+        ppq -= std::max (0, engine.getLatencySamples()) / preparedRate * params.bpm / 60.0;
+        ducker.process (l, r, n, ppq, params.bpm, playing, params.scAmount, params.scRate, params.scShape);
+    }
 
     if (const int lat = engine.getLatencySamples(); lat != reportedLatency)
     {

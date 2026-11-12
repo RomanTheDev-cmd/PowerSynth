@@ -211,7 +211,7 @@ public:
     void resized() override;
 
 private:
-    Segment oversample;
+    Segment oversample, scSource, scRate, scShape;   // SIDECHAIN source, length and curve (3.1)
     Knob fltAttack, fltSustain, fltRelease, delayTime, delayFb, reverbSize, velSens, bend, oscBFine;
 };
 }
@@ -248,7 +248,7 @@ private:
     ps::ui::Knob cutoff, resonance, fltEnv, fltDecay, grit, morph;
     ps::ui::Knob attack, decay, sustain, release, glide, pitchEnv, pitchTime, punch;
     ps::ui::Knob lfoAmount, lfoRate, lfoDiv;
-    ps::ui::Knob drive, chorus, delayMix, reverbMix, width, smash, shift, master;
+    ps::ui::Knob drive, chorus, delayMix, reverbMix, width, smash, shift, sidechain, master;
     ps::ui::Segment filterMode, driveType, voiceMode, lfoShape, lfoTarget, lfoSync, warpMode;
     std::unique_ptr<ps::ui::Segment> analogMode; // DIGITAL | ANALOGUE, in the header (2026-10-28)
     ps::ui::WaveformView waveform;
