@@ -259,6 +259,9 @@ void testSidechain()
         p.prepareToPlay (48000.0, 512);
         setPlain (p, ps::id::sustain, 1.0f); setPlain (p, ps::id::reverbMix, 0.0f); setPlain (p, ps::id::delayMix, 0.0f);
         setPlain (p, ps::id::lfoAmount, 0.0f); setPlain (p, ps::id::scAmount, amount); setPlain (p, ps::id::scSource, (float) source);
+        // a steady sound for an 8 ms window (3.1.1): SHIFT of the default preset beats, and the energy within the window
+        // moved with its phase (-19.6 dB instead of -20 with the same ducking curve; -22 dB without SHIFT)
+        setPlain (p, ps::id::shift, 0.0f);
         TestHead head; p.setPlayHead (&head);
         std::vector<float> out;
         juce::AudioBuffer<float> buf (2, 512);

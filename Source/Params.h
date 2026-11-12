@@ -75,6 +75,8 @@ namespace id
     inline constexpr const char* scShape    = "scShape";
     inline constexpr const char* scSource   = "scSource";
     inline constexpr const char* morphEnv   = "morphEnv";
+    // LFO ON (3.1.1, 2026-11-12): the LFO off without losing its settings
+    inline constexpr const char* lfoOn      = "lfoOn";
 }
 
 enum class FilterMode { lp24, lp12, bp, hp, comb };
@@ -124,6 +126,7 @@ struct SynthParams
     bool lfoSync = false;
     int lfoDiv = 3;               // 1/8
     float lfoAmount = 0.0f;
+    bool lfoOn = true;            // 3.1.1: the LFO switched off keeps AMOUNT, target and rate (Roman: "просто выключить")
     DriveType driveType = DriveType::saturate;
     float drive = 0.2f;
     float chorus = 0.2f;

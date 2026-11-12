@@ -249,7 +249,7 @@ private:
     ps::ui::Knob attack, decay, sustain, release, glide, pitchEnv, pitchTime, punch;
     ps::ui::Knob lfoAmount, lfoRate, lfoDiv;
     ps::ui::Knob drive, chorus, delayMix, reverbMix, width, smash, shift, sidechain, master;
-    ps::ui::Segment filterMode, driveType, voiceMode, lfoShape, lfoTarget, lfoSync, warpMode;
+    ps::ui::Segment filterMode, driveType, voiceMode, lfoShape, lfoTarget, lfoSync, lfoOn, warpMode;
     std::unique_ptr<ps::ui::Segment> analogMode; // DIGITAL | ANALOGUE, in the header (2026-10-28)
     ps::ui::WaveformView waveform;
     std::atomic<bool> soundDirty { true };

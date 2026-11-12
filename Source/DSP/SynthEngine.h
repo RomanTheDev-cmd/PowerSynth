@@ -25,6 +25,12 @@ namespace ps::dsp
 {
 inline double dbToGain (double db) noexcept { return std::pow (10.0, db / 20.0); }
 
+// SHIFT moves the voice sum down by this many Hz (a frequency shifter: inharmonic, "a machine, not a plug-in").
+// 3.1.1 (2026-11-12, Roman: the pitch of a lead drifted): every voice is tuned up by the same Hz first, so after the
+// shift its main oscillator's fundamental is exactly on the note again; the upper partials keep the shift (they end
+// up above their harmonics: n f0 + (n-1) shift). Before, C3 sounded 101 cents flat at 34 %, 325 at 60 %.
+inline double shiftHz (float shift) noexcept { return shift > 0.001f ? 60.0 * (double) shift * (double) shift : 0.0; }
+
 inline double polyBlep (double t, double dt) noexcept
 {
     if (t < dt) { t /= dt; return t + t - t * t - 1.0; }
@@ -290,6 +296,7 @@ struct Control // per-sample values shared by all voices
     const float* lfo = nullptr;   // -1..1
     const float* ana = nullptr;   // DIGITAL 0 .. ANALOGUE 1
     double bendSemis = 0.0;
+    const float* lfoDepth = nullptr;   // 3.1.1 LFO ON: 1 on, 0 off, fading over ~5 ms (no click when switched)
 };
 
 class Voice
@@ -374,6 +381,7 @@ public:
         const double fmIdx = std::pow (p.fmAmount, 1.5) * 3.0;
         const double q = 0.55 + std::pow (p.resonance, 2.0) * 14.0;
         const double keyOct = 0.5 * (note - 60) / 12.0;
+        const double shiftUp = shiftHz (p.shift) / (p.oscBLevel > p.oscALevel ? bRatio : aOct);
         for (int k = 0; k < uni; ++k)
         {
             const double pos = uni == 1 ? 0.0 : -1.0 + 2.0 * k / (uni - 1);   // -1..1 across the stereo field
@@ -387,11 +395,13 @@ public:
             age += dt; pitchAge += dt;
             const double ana = c.ana[i];
             const double lfo = c.lfo[i];
+            const double lfoAmt = p.lfoAmount * (c.lfoDepth != nullptr ? c.lfoDepth[i] : 1.0f);   // LFO ON / off
             logFreq = targetLogFreq + glideCoef * (logFreq - targetLogFreq);
             const double dM = drift.tick (rnd, 15.0);
-            double semis = c.bendSemis + (p.lfoTarget == LfoTarget::pitch ? lfo * p.lfoAmount * 2.0 : 0.0);
+            double semis = c.bendSemis + (p.lfoTarget == LfoTarget::pitch ? lfo * lfoAmt * 2.0 : 0.0);
             if (p.pitchEnv != 0.0f) semis += p.pitchEnv * std::exp (-pitchAge * 3.0 / std::max (0.002, p.pitchTimeMs * 0.001));
-            const double fBase = std::exp (logFreq) * std::exp2 (semis / 12.0 + ana * (noteCents + dM) / 1200.0);
+            // SHIFT pre-tuning: the louder oscillator's fundamental lands on the note after the shift (see shiftHz)
+            const double fBase = std::exp (logFreq) * std::exp2 (semis / 12.0 + ana * (noteCents + dM) / 1200.0) + shiftUp;
             const double fA = fBase * aOct;
             const double fe = flt.tick (p.fltAttackMs * 0.001, p.fltDecayMs * 0.001, p.fltSustain, p.fltReleaseMs * 0.001, sr);
             double shapeA = p.oscAShape, shapeB = p.oscBShape, warp = p.warp;
@@ -403,15 +413,15 @@ public:
             if (p.lfoTarget == LfoTarget::shape)
             {
                 // a classic shape stays among the classic ones (sounds of 1.x unchanged), a table among the tables
-                shapeA = juce::jlimit (0.0, p.oscAShape <= 3.0f ? 3.0 : (double) maxShape, shapeA + lfo * p.lfoAmount * 1.5);
-                shapeB = juce::jlimit (0.0, p.oscBShape <= 3.0f ? 3.0 : (double) maxShape, shapeB + lfo * p.lfoAmount * 1.5);
-                if (warp > 0.0) warp = juce::jlimit (0.0, 1.0, warp + lfo * p.lfoAmount * 0.5);   // PWM hoover etc.
+                shapeA = juce::jlimit (0.0, p.oscAShape <= 3.0f ? 3.0 : (double) maxShape, shapeA + lfo * lfoAmt * 1.5);
+                shapeB = juce::jlimit (0.0, p.oscBShape <= 3.0f ? 3.0 : (double) maxShape, shapeB + lfo * lfoAmt * 1.5);
+                if (warp > 0.0) warp = juce::jlimit (0.0, 1.0, warp + lfo * lfoAmt * 0.5);   // PWM hoover etc.
             }
 
             const double incB = std::min (fBase * bRatio * std::exp2 (ana * noteCentsB / 1200.0) * dt, 0.45);
             phaseB += incB; phaseB -= std::floor (phaseB);
             const double b = shapeWave (phaseB, incB * blMul, shapeB);
-            const double fmNow = p.lfoTarget == LfoTarget::fm ? fmIdx * std::max (0.0, 1.0 + lfo * p.lfoAmount) : fmIdx;
+            const double fmNow = p.lfoTarget == LfoTarget::fm ? fmIdx * std::max (0.0, 1.0 + lfo * lfoAmt) : fmIdx;
             const double pm = fmNow * b / (2.0 * pi);
 
             double l = 0.0, r = 0.0;
@@ -444,7 +454,7 @@ public:
             if (--ctlCountdown <= 0)
             {
                 ctlCountdown = 16;
-                const double lfoOct = p.lfoTarget == LfoTarget::cutoff ? lfo * p.lfoAmount * 3.0 : 0.0;
+                const double lfoOct = p.lfoTarget == LfoTarget::cutoff ? lfo * lfoAmt * 3.0 : 0.0;
                 const double cut = juce::jlimit (25.0, sr * 0.45, p.cutoffHz * std::exp2 (p.fltEnv * fe * 6.0 + keyOct + lfoOct)
                                                                    * (1.0 + ana * (noteCut - 1.0)));
                 for (auto* f : { &fL[0], &fL[1], &fR[0], &fR[1] }) f->set (cut, p.filterMode == FilterMode::lp24 ? std::sqrt (q) * 0.9 : q, sr);
@@ -477,7 +487,7 @@ public:
 
             const double env = amp.tick (p.attackMs * 0.001, p.decayMs * 0.001, p.sustain, p.releaseMs * 0.001, sr);
             double g = env * velGain;
-            if (p.lfoTarget == LfoTarget::amp) g *= 1.0 - p.lfoAmount * (0.5 - 0.5 * lfo);
+            if (p.lfoTarget == LfoTarget::amp) g *= 1.0 - lfoAmt * (0.5 - 0.5 * lfo);
             if (fading)
             {
                 fade -= fadeStep;
@@ -626,6 +636,9 @@ public:
         blockMax = std::max (32, maxBlock);
         for (auto& v : voices) v.prepare (2.0 * sr, 2.0);   // 3.1: the voices at twice the rate
         lfoBuf.assign ((size_t) blockMax * 2, 0.0f);
+        lfoDepthBuf.assign ((size_t) blockMax * 2, 1.0f);
+        lfoDepth = p.lfoOn ? 1.0 : 0.0;   // as it is set: no fade at the start
+        lfoDepthK = 1.0 - std::exp (-1.0 / (0.005 * sampleRate));
         anaBuf.assign ((size_t) blockMax * 2, 0.0f);
         voiceL.assign ((size_t) blockMax * 2, 0.0f);
         voiceR.assign ((size_t) blockMax * 2, 0.0f);
@@ -731,6 +744,15 @@ private:
 
     void noteOn (int note, float vel, const SynthParams& p)
     {
+        // SHIFT from silence (3.1.1): the shifter starts again with the note, so a phrase after a rest sounds the same on
+        // every pass (it ran on, and each pass of a pattern went through the drive at another phase - another timbre).
+        // Only when every voice is below -50 dB: a reset under a sounding note would click.
+        if (p.shift > 0.001f)
+        {
+            bool quiet = true;
+            for (const auto& v : voices) if (v.isActive() && v.getLevel() > 0.003) { quiet = false; break; }
+            if (quiet) for (auto& sh : shifter) sh.reset();
+        }
         held.erase (std::remove (held.begin(), held.end(), note), held.end());
         if (held.size() < 128) held.push_back (note);
         if (p.voiceMode != VoiceMode::poly)
@@ -831,17 +853,20 @@ private:
         {
             const float lv = (float) lfoTick (p), av = (float) anaBlend.tick (p.analog);
             lfoBuf[(size_t) (2 * i)] = lfoBuf[(size_t) (2 * i + 1)] = lv;
+            lfoDepth += ((p.lfoOn ? 1.0 : 0.0) - lfoDepth) * lfoDepthK;
+            lfoDepthBuf[(size_t) (2 * i)] = lfoDepthBuf[(size_t) (2 * i + 1)] = (float) lfoDepth;
             anaBuf[(size_t) (2 * i)] = anaBuf[(size_t) (2 * i + 1)] = av;
         }
-        Control c { lfoBuf.data(), anaBuf.data(), bendSemis };
+        Control c { lfoBuf.data(), anaBuf.data(), bendSemis, lfoDepthBuf.data() };
         for (auto& v : voices) v.render (VL, VR, 2 * n, p, c, anaRand);
         decim.process (VL, VR, L, R, n);
 
         // SHIFT: a small frequency shift before the drive (stabs sound less like a plug-in, more like a machine)
         if (p.shift > 0.001f)
         {
-            const double hz = 60.0 * p.shift * p.shift;
-            for (int i = 0; i < n; ++i) { L[i] = (float) shifter[0].tick (L[i], hz, sr); R[i] = (float) shifter[1].tick (R[i], hz * 1.07, sr); }
+            // the same shift in L and R (3.1.1: R was 7 % further - the channels drifted apart, a slow wobble in mono)
+            const double hz = shiftHz (p.shift);
+            for (int i = 0; i < n; ++i) { L[i] = (float) shifter[0].tick (L[i], hz, sr); R[i] = (float) shifter[1].tick (R[i], hz, sr); }
         }
 
         // SMASH: the three bands balanced against the sound's own level, before the drive
@@ -999,7 +1024,8 @@ private:
     std::array<Shifter, 2> shifter;
     Smash smashFx;
     std::vector<int> held;
-    std::vector<float> lfoBuf, anaBuf, mixL, mixR, voiceL, voiceR, delayL, delayR;
+    std::vector<float> lfoBuf, anaBuf, mixL, mixR, voiceL, voiceR, delayL, delayR, lfoDepthBuf;
+    double lfoDepth = 1.0, lfoDepthK = 0.004;   // LFO ON (3.1.1)
     Decimator2x decim;
     std::array<double, 2> foldPrev {};
     double monoEM = 0.0, monoES = 0.0, monoG = 1.0, monoK = 0.001, monoKFast = 0.01, monoKSlow = 0.001;

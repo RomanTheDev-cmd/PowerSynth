@@ -931,6 +931,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
       lfoShape (p.state, ps::id::lfoShape, { "SIN", "TRI", "SAW", "SQR", "RND" }, juce::String::fromUTF8 ("Форма LFO")),
       lfoTarget (p.state, ps::id::lfoTarget, { "PITCH", "CUTOFF", "SHAPE", "AMP", "FM" }, juce::String::fromUTF8 ("Что двигает LFO: SHAPE — форму и WARP, FM — глубину FM (рык в темпе)")),
       lfoSync (p.state, ps::id::lfoSync, { "SYNC" }, juce::String::fromUTF8 ("Включено: LFO идёт в темпе проекта (DIV)")),
+      lfoOn (p.state, ps::id::lfoOn, { "ON" }, juce::String::fromUTF8 ("Включает и выключает LFO целиком. Выключено — звук без движения LFO, а AMOUNT, форма, цель и скорость остаются как были")),
       warpMode (p.state, ps::id::warpMode, { "SYNC", "BEND", "PWM", "FOLD" }, juce::String::fromUTF8 ("Режим деформации OSC A")),
       advanced (p.state), browser (p)
 {
@@ -945,7 +946,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
              &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
              &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv, &pitchTime, &punch,
              &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &sidechain, &master, &filterMode, &driveType,
-             &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &warpMode,
+             &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &lfoOn, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
              &previewButton, &favouriteButton })
         addAndMakeVisible (c);
@@ -1204,9 +1205,12 @@ void PowerSynthEditor::resized()
     for (auto* k : { &glide, &pitchEnv, &pitchTime, &punch })
         k->setBounds (amp.removeFromLeft (ew));
 
-    // LFO: waveform, then target and SYNC, then amount with rate and division.
+    // LFO: ON and the waveform, then target and SYNC, then amount with rate and division.
     auto lfo = b[1];
-    lfoShape.setBounds (lfo.removeFromTop (S (26)));
+    auto shapeRow = lfo.removeFromTop (S (26));
+    lfoOn.setBounds (shapeRow.removeFromRight (S (58)));
+    shapeRow.removeFromRight (S (6));
+    lfoShape.setBounds (shapeRow);
     lfo.removeFromTop (S (6));
     auto tgtRow = lfo.removeFromTop (S (26));
     lfoSync.setBounds (tgtRow.removeFromRight (S (58)));

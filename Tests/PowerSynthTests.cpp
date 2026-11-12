@@ -5,6 +5,7 @@
 //   powersynth_tests --dump-presets   name|category|id=value ... per factory preset
 //   powersynth_tests --calibrate      the MASTER that puts each factory preset's true peak at -1 dBTP (standard phrase)
 //   powersynth_tests --serve          render server for Tools/fit_synth.py (see servePhrase)
+//   powersynth_tests --shift          only the SHIFT and LFO checks of 3.1.1
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
 #include <chrono>
@@ -320,6 +321,33 @@ void testTuningBendAndLfo()
         if (cc > bestC) { bestC = cc; best = lag; }
     }
     expect (best >= 19 && best <= 21, "LFO 1/4 at 120 BPM: period 0.5 s (" + juce::String (best * 0.025, 3) + " s)");
+
+    // LFO ON (3.1.1, Roman about a lead that kept dipping: "где-то оно надо, где-то нет, надо просто иметь возможность
+    // выключить"): off, the LFO does nothing on any target - the same sound as AMOUNT 0 - and AMOUNT stays set.
+    {
+        auto q = p; q.lfoOn = false;
+        auto z = p; z.lfoAmount = 0.0f;
+        const auto off = render (q, { { 0.0, 3.0, 57 } }, 3.0), zero = render (z, { { 0.0, 3.0, 57 } }, 3.0);
+        double d = 0.0, e = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < off.getNumSamples(); ++i) { const double a = off.getSample (ch, i), b = zero.getSample (ch, i); d += (a - b) * (a - b); e += b * b; }
+        expect (db (std::sqrt (d / std::max (e, 1.0e-20))) < -60.0, "LFO off on AMP: the sound of AMOUNT 0 (difference " + juce::String (db (std::sqrt (d / std::max (e, 1.0e-20))), 1) + " dB)");
+        expect (q.lfoAmount == 1.0f, "LFO off keeps its AMOUNT");
+        for (const auto target : { LfoTarget::pitch, LfoTarget::cutoff, LfoTarget::shape, LfoTarget::fm })
+        {
+            auto t1 = p; t1.lfoTarget = target; t1.lfoOn = false; t1.oscAShape = 2.0f; t1.fmAmount = 0.3f; t1.oscBLevel = 0.3f; t1.cutoffHz = 2000.0f;
+            auto t0 = t1; t0.lfoOn = true; t0.lfoAmount = 0.0f;
+            const auto a1 = render (t1, { { 0.0, 1.5, 57 } }, 1.5), a0 = render (t0, { { 0.0, 1.5, 57 } }, 1.5);
+            double dd = 0.0, ee = 0.0;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < a1.getNumSamples(); ++i) { const double a = a1.getSample (ch, i), b = a0.getSample (ch, i); dd += (a - b) * (a - b); ee += b * b; }
+            expect (db (std::sqrt (dd / std::max (ee, 1.0e-20))) < -60.0, "LFO off: no modulation on target " + juce::String ((int) target)
+                    + " (difference " + juce::String (db (std::sqrt (dd / std::max (ee, 1.0e-20))), 1) + " dB)");
+        }
+    }
+    int notOn = 0;
+    for (const auto& pr : factoryPresets()) notOn += paramsFromSnapshot (pr.values).lfoOn ? 0 : 1;
+    expect (notOn == 0, "every factory preset loads with the LFO on (" + juce::String (notOn) + " off)");
 }
 
 void testAnalogue()
@@ -510,6 +538,71 @@ void testCharacter()
     }
 }
 
+// SHIFT IN TUNE (2026-11-12, Roman: "почему у него питч уплывает после начала нового паттерна?" - Razor I on a lead in
+// Logic). SHIFT moved every partial down by the same number of Hz (7.1 at 34 %): C3 sounded 105 cents flat, a low note
+// more out of tune than a high one, L and R shifted apart (a slow wobble). The note must stay on its pitch: the strongest
+// partial near the note within 5 cents, in L and in R; the shift must still move the upper partials off the harmonics.
+double peakHzNear (const juce::AudioBuffer<float>& a, int ch, double t0, double f, double range)
+{
+    const int n = 16384, start = (int) (t0 * 48000.0);
+    std::vector<double> x ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * i / (n - 1));
+        const double v = ch < 0 ? 0.5 * (a.getSample (0, start + i) + a.getSample (1, start + i)) : a.getSample (ch, start + i);
+        x[(size_t) i] = v * w;
+    }
+    double best = f, bestMag = -1.0;
+    for (double hz = f - range; hz <= f + range; hz += 0.05)
+    {
+        const double k = 2.0 * juce::MathConstants<double>::pi * hz / 48000.0;
+        double re = 0.0, im = 0.0;
+        for (int i = 0; i < n; ++i) { re += x[(size_t) i] * std::cos (k * i); im -= x[(size_t) i] * std::sin (k * i); }
+        if (re * re + im * im > bestMag) { bestMag = re * re + im * im; best = hz; }
+    }
+    return best;
+}
+
+void testShiftInTune()
+{
+    for (const float sh : { 0.344f, 0.6f })
+        for (const int note : { 48, 53, 72 })
+        {
+            auto p = plain(); p.oscAShape = 2.0f; p.shift = sh;
+            const auto a = render (p, { { 0.0, 1.2, note } }, 1.2);
+            const double f0 = 440.0 * std::exp2 ((note - 69) / 12.0), hzShift = 60.0 * sh * sh;
+            for (int ch : { 0, 1 })
+            {
+                const double c = 1200.0 * std::log2 (peakHzNear (a, ch, 0.4, f0, hzShift * 1.6 + 2.0) / f0);
+                expect (std::abs (c) < 5.0, "SHIFT " + juce::String (juce::roundToInt (sh * 100)) + " %: note " + juce::String (note)
+                        + (ch == 0 ? " L" : " R") + " on its pitch (" + juce::String (c, 1) + " cents)");
+            }
+            const double h2 = peakHzNear (a, -1, 0.4, 2.0 * f0, hzShift * 1.6 + 2.0) - 2.0 * f0;
+            expect (std::abs (h2) > 0.5 * hzShift, "SHIFT " + juce::String (juce::roundToInt (sh * 100)) + " %: note " + juce::String (note)
+                    + " - the 2nd partial still moved off the harmonic (" + juce::String (h2, 1) + " Hz)");
+        }
+    // The shifter ran on and on: the same phrase sounded different on every pass (1/3-octave bands 1.3 dB apart on
+    // average, 4.4 dB at the 95th percentile, through DRIVE). From silence it now starts again with the note: a phrase
+    // with a rest before it is the same on every pass.
+    {
+        auto p = plain(); p.oscAShape = 2.0f; p.shift = 0.344f; p.drive = 0.35f;
+        std::vector<Note> ph;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int k = 0; k < 6; ++k) ph.push_back ({ pass * 1.3 + k * 0.12, pass * 1.3 + k * 0.12 + 0.09, 48 + (k % 3) * 5 });
+        const auto a = render (p, ph, 2.6);
+        const int off = (int) (1.3 * 48000);
+        double d = 0.0, e = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < (int) (1.2 * 48000); ++i)
+            {
+                const double x1 = a.getSample (ch, i), x2 = a.getSample (ch, i + off);
+                d += (x1 - x2) * (x1 - x2); e += x1 * x1;
+            }
+        expect (db (std::sqrt (d / std::max (e, 1.0e-20))) < -40.0, "SHIFT: a phrase after a rest is the same on the next pass (difference "
+                + juce::String (db (std::sqrt (d / std::max (e, 1.0e-20))), 1) + " dB)");
+    }
+}
+
 // ALIASING (2026-11-12): a harmonic note through each block of the voice and the drive must stay harmonic. Energy between
 // the harmonics is folded back from above the Nyquist frequency - the "cheap, digital" grit (Roman: "дешёвый"). A6, the
 // top of a lead line, where it is worst; each block at full; 0.3 % (-25 dB) is the bar of the band-limited wavetables.
@@ -685,6 +778,13 @@ int main (int argc, char** argv)
         }
         return 0;
     }
+    if (mode == "--shift")   // only the SHIFT and LFO checks of 3.1.1 (quick, while working on them)
+    {
+        testShiftInTune();
+        testTuningBendAndLfo();
+        std::cout << (failures == 0 ? "PASS " : "FAILED ") << (checks - failures) << "/" << checks << " checks\n";
+        return failures == 0 ? 0 : 1;
+    }
     testFactoryPresets();
     testPolyphonyAndStealing();
     testMonoAndLegato();
@@ -695,6 +795,7 @@ int main (int argc, char** argv)
     testMovement();
     testAliasing();
     testMono();
+    testShiftInTune();
     testCpu();
     std::cout << (failures == 0 ? "PASS " : "FAILED ") << (checks - failures) << "/" << checks << " checks\n";
     return failures == 0 ? 0 : 1;

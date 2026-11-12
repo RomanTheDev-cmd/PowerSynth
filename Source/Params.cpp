@@ -66,7 +66,7 @@ const juce::StringArray& allParamIds()
                                          id::reverbMix, id::reverbSize, id::voiceMode, id::glide, id::width, id::master, id::velSens,
                                          id::bendRange, id::oversample, id::analog, id::warpMode, id::warp, id::ring,
                                          id::pitchEnv, id::pitchTime, id::grit, id::smash, id::shift, id::morphEnv, id::punch,
-                                         id::scAmount, id::scRate, id::scShape, id::scSource };
+                                         id::scAmount, id::scRate, id::scShape, id::scSource, id::lfoOn };
     return ids;
 }
 
@@ -108,6 +108,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     l.add (std::make_unique<APB> (juce::ParameterID { id::lfoSync, 1 }, "LFO Sync", d.lfoSync));
     choice (l, id::lfoDiv, "LFO Division", divisionNames(), d.lfoDiv);
     unit (l, id::lfoAmount, "LFO Amount", d.lfoAmount);
+    l.add (std::make_unique<APB> (juce::ParameterID { id::lfoOn, 1 }, "LFO On", d.lfoOn));   // 3.1.1, on by default
 
     choice (l, id::driveType, "Drive Type", { "Saturate", "Clip", "Fold", "Crush" }, (int) d.driveType);
     unit (l, id::drive, "Drive", d.drive);
@@ -179,6 +180,7 @@ SynthParams paramsFrom (const std::function<float (const char*, float)>& get)
     p.lfoSync = get (id::lfoSync, p.lfoSync ? 1.0f : 0.0f) > 0.5f;
     p.lfoDiv = juce::jlimit (0, numDivisions - 1, i (id::lfoDiv, p.lfoDiv));
     p.lfoAmount = get (id::lfoAmount, p.lfoAmount);
+    p.lfoOn = get (id::lfoOn, p.lfoOn ? 1.0f : 0.0f) > 0.5f;
     p.driveType = (DriveType) juce::jlimit (0, 3, i (id::driveType, (int) p.driveType));
     p.drive = get (id::drive, p.drive);
     p.chorus = get (id::chorus, p.chorus);
