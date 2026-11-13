@@ -1,7 +1,7 @@
 // PowerSynth wrapper tests: processor, state, presets and the editor through the plug-in's shared code.
 //   powersynth_wrapper_tests                     all checks
 //   powersynth_wrapper_tests --snapshot <dir>    main.png, advanced.png, browser.png, browser_favourites.png, main_small.png,
-//                                                main_large.png
+//                                                main_large.png, full.png (EDIT), full_small.png
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <iostream>
@@ -314,27 +314,87 @@ void testEditor()
     PowerSynthProcessor p;
     p.prepareToPlay (48000.0, 512);
     std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
-    for (auto [w, h] : { std::pair { 1080, 720 }, std::pair { 864, 576 }, std::pair { 1620, 1080 } })
+    auto checkLayout = [&ed] (const juce::String& view)
     {
-        ed->setSize (w, h);
-        int outside = 0, overlaps = 0;
-        juce::Array<juce::Component*> shown;
+        for (auto [w, h] : { std::pair { 1080, 720 }, std::pair { 864, 576 }, std::pair { 1620, 1080 } })
+        {
+            ed->setSize (w, h);
+            int outside = 0, overlaps = 0;
+            juce::Array<juce::Component*> shown;
+            for (auto* c : ed->getChildren())
+                if (c->isVisible() && c->getComponentID() != "presetBrowser")
+                {
+                    outside += ed->getLocalBounds().contains (c->getBounds()) ? 0 : 1;
+                    for (auto* o : shown)
+                        if (o->getBounds().intersects (c->getBounds()))
+                        {
+                            ++overlaps;
+                            std::cout << "  overlap " << w << "x" << h << ": " << o->getComponentID() << " / " << c->getComponentID() << " ("
+                                      << o->getBounds().toString() << " / " << c->getBounds().toString() << ")\n";
+                        }
+                    shown.add (c);
+                }
+            expect (outside == 0 && overlaps == 0, view + " editor " + juce::String (w) + "x" + juce::String (h) + ": all controls inside, none overlapping ("
+                    + juce::String (outside) + " outside, " + juce::String (overlaps) + " overlaps)");
+        }
+        ed->setSize (1080, 720);
+    };
+    // Visible knobs by parameter ID (a Knob's component ID is its parameter).
+    auto visibleKnobs = [&ed]
+    {
+        juce::StringArray ids;
         for (auto* c : ed->getChildren())
-            if (c->isVisible() && c->getComponentID() != "presetBrowser")
-            {
-                outside += ed->getLocalBounds().contains (c->getBounds()) ? 0 : 1;
-                for (auto* o : shown)
-                    if (o->getBounds().intersects (c->getBounds()))
-                    {
-                        ++overlaps;
-                        std::cout << "  overlap " << w << "x" << h << ": " << o->getComponentID() << " / " << c->getComponentID() << " ("
-                                  << o->getBounds().toString() << " / " << c->getBounds().toString() << ")\n";
-                    }
-                shown.add (c);
-            }
-        expect (outside == 0 && overlaps == 0, "editor " + juce::String (w) + "x" + juce::String (h) + ": all controls inside, none overlapping ("
-                + juce::String (outside) + " outside, " + juce::String (overlaps) + " overlaps)");
+            if (c->isVisible() && dynamic_cast<ps::ui::Knob*> (c) != nullptr)
+                ids.add (c->getComponentID());
+        return ids;
+    };
+
+    // 3.2 (Roman: "the interface is too complex and overloaded"): a new instance opens with the 12 main knobs
+    // and MASTER; EDIT shows every block as before.
+    const juce::StringArray mainKnobs { ps::id::oscAShape, ps::id::detune, ps::id::cutoff, ps::id::resonance, ps::id::attack, ps::id::release,
+                                        ps::id::lfoAmount, ps::id::drive, ps::id::chorus, ps::id::delayMix, ps::id::reverbMix, ps::id::width, ps::id::master };
+    auto shown = visibleKnobs();
+    shown.sort (false);
+    auto expected = mainKnobs;
+    expected.sort (false);
+    expect (shown == expected, "a new editor shows only the 12 main knobs and MASTER (shown: " + shown.joinIntoString (" ") + ")");
+    auto* lfoOn = ed->findChildWithID (ps::id::lfoOn);
+    expect (lfoOn != nullptr && lfoOn->isVisible(), "the main view has the LFO ON switch");
+    checkLayout ("main");
+
+    auto* edit = dynamic_cast<juce::Button*> (ed->findChildWithID ("editButton"));
+    expect (edit != nullptr && edit->isVisible(), "the header has EDIT");
+    if (edit == nullptr) return;
+    const auto before = ps::captureSnapshot (p.state);
+    edit->setToggleState (true, juce::sendNotification);
+    expect (visibleKnobs().size() == 39, "EDIT shows all 39 knobs (" + juce::String (visibleKnobs().size()) + ")");
+    for (const auto* id : { "filterMode", "driveType", "voiceMode", "lfoShape", "lfoTarget", "warpMode" })
+        expect (ed->findChildWithID (id) != nullptr && ed->findChildWithID (id)->isVisible(), juce::String ("EDIT shows ") + id);
+    checkLayout ("EDIT");
+    expect (ps::captureSnapshot (p.state) == before, "switching the view changes no setting");
+
+    // The view is part of the project; a project from before 3.2 opens with the main knobs.
+    juce::MemoryBlock saved;
+    p.getStateInformation (saved);
+    {
+        PowerSynthProcessor q;
+        q.setStateInformation (saved.getData(), (int) saved.getSize());
+        std::unique_ptr<juce::AudioProcessorEditor> e2 (q.createEditor());
+        auto* b = dynamic_cast<juce::Button*> (e2->findChildWithID ("editButton"));
+        expect (b != nullptr && b->getToggleState() && e2->findChildWithID (ps::id::unison)->isVisible(), "a project saved with EDIT reopens with EDIT");
     }
+    edit->setToggleState (false, juce::sendNotification);
+    expect (visibleKnobs().size() == 13, "EDIT again returns to the main knobs");
+    {
+        auto xml = p.state.copyState().createXml(); // no view property: as saved by 3.1
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        PowerSynthProcessor q;
+        q.setStateInformation (old.getData(), (int) old.getSize());
+        std::unique_ptr<juce::AudioProcessorEditor> e2 (q.createEditor());
+        expect (! e2->findChildWithID (ps::id::unison)->isVisible(), "a project from 3.1 opens with the main knobs");
+    }
+
     auto* seg = ed->findChildWithID ("analog");
     expect (seg != nullptr && seg->getNumChildComponents() == 2, "the header has DIGITAL | ANALOGUE");
     auto* wave = ed->findChildWithID ("waveform");
@@ -376,6 +436,13 @@ void snapshot (const juce::File& dir)
         }
     ed->setSize (864, 576); save (*ed, "main_small.png");
     ed->setSize (1620, 1080); save (*ed, "main_large.png");
+    if (auto* e = dynamic_cast<juce::Button*> (ed->findChildWithID ("editButton")))
+    {
+        e->setToggleState (true, juce::sendNotification);
+        ed->setSize (1080, 720); save (*ed, "full.png");
+        ed->setSize (864, 576); save (*ed, "full_small.png");
+        e->setToggleState (false, juce::sendNotification);
+    }
 }
 }
 

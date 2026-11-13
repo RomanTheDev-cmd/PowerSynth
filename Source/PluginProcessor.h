@@ -52,6 +52,8 @@ public:
     std::atomic<int> scopeWrite { 0 };
     std::atomic<float> meterL { 0.0f }, meterR { 0.0f };
     std::atomic<bool> previewRequested { false };
+    // The editor's EDIT view (3.2): saved with the project, false (the main knobs) for a new instance or an older project.
+    std::atomic<bool> fullView { false };
 
 private:
     juce::String presetName { "Razor I" }; // the first preset of the library

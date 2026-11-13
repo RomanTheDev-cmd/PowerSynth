@@ -162,6 +162,7 @@ void PowerSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto tree = state.copyState();
     tree.setProperty ("presetName", getPresetName(), nullptr);
+    tree.setProperty ("fullView", fullView.load(), nullptr);
     if (auto xml = tree.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -173,6 +174,7 @@ void PowerSynthProcessor::setStateInformation (const void* data, int sizeInBytes
         {
             auto tree = juce::ValueTree::fromXml (*xml);
             setPresetName (tree.getProperty ("presetName", getPresetName()).toString());
+            fullView = (bool) tree.getProperty ("fullView", false);
             // Parameters added after this project was saved come back neutral (old sound).
             juce::StringArray missing;
             for (const auto& [pid, value] : ps::legacyNeutral())

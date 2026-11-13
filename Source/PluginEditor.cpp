@@ -150,13 +150,20 @@ float Knob::scale() const
     return top != nullptr && top->getWidth() > 0 ? (float) top->getWidth() / 1080.0f : 1.0f;
 }
 
-int Knob::labelHeight() const { return juce::roundToInt ((isPrimary() ? 20.0f : 17.0f) * scale()); }
+void Knob::setLarge (bool l)
+{
+    slider.getProperties().set ("large", l);
+    resized();
+    repaint();
+}
+
+int Knob::labelHeight() const { return juce::roundToInt ((isLarge() ? 20.0f : 17.0f) * scale()); }
 
 void Knob::resized()
 {
     // Name, dial and value as one group, centred in the knob's area.
     const int label = labelHeight();
-    const int cap = juce::roundToInt ((isPrimary() ? 112.0f : 62.0f) * scale());
+    const int cap = juce::roundToInt ((isLarge() ? 112.0f : 62.0f) * scale());
     const int d = std::max (0, std::min ({ getWidth(), getHeight() - 2 * label, cap }));
     auto group = getLocalBounds().withSizeKeepingCentre (getWidth(), d + 2 * label);
     group.removeFromTop (label);
@@ -166,14 +173,14 @@ void Knob::resized()
 void Knob::paint (juce::Graphics& g)
 {
     const float s = scale();
-    const bool primary = isPrimary();
+    const bool large = isLarge();
     const int label = labelHeight();
     const auto dial = slider.getBounds();
-    g.setColour (primary ? colours::text : colours::dim);
-    g.setFont (uiFont ((primary ? 12.0f : 10.5f) * s, true).withExtraKerningFactor (0.12f));
+    g.setColour (large ? colours::text : colours::dim);
+    g.setFont (uiFont ((large ? 12.0f : 10.5f) * s, true).withExtraKerningFactor (0.12f));
     g.drawText (title, juce::Rectangle<int> (0, dial.getY() - label, getWidth(), label), juce::Justification::centred);
     g.setColour (colours::text);
-    g.setFont (uiFont ((primary ? 14.0f : 12.0f) * s));
+    g.setFont (uiFont ((large ? 14.0f : 12.0f) * s));
     g.drawText (slider.getTextFromValue (slider.getValue()), juce::Rectangle<int> (0, dial.getBottom(), getWidth(), label),
                 juce::Justification::centred);
 }
@@ -183,6 +190,7 @@ Segment::Segment (juce::AudioProcessorValueTreeState& s, const juce::String& pid
                   const juce::String& tooltip)
     : state (s), paramId (pid)
 {
+    setComponentID (pid);
     for (int i = 0; i < labels.size(); ++i)
     {
         auto* b = buttons.add (new juce::TextButton (labels[i]));
@@ -948,7 +956,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
              &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &sidechain, &master, &filterMode, &driveType,
              &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &lfoOn, &warpMode,
              &waveform, &meter, &prevButton, &nextButton, &presetButton, &saveButton, &advancedButton, &menuButton,
-             &previewButton, &favouriteButton })
+             &previewButton, &favouriteButton, &editButton })
         addAndMakeVisible (c);
     addChildComponent (advanced);
     waveform.setComponentID ("waveform");
@@ -995,6 +1003,16 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     saveButton.onClick = [this] { savePreset(); };
     menuButton.onClick = [this] { showMainMenu(); };
     previewButton.onClick = [this] { proc.previewRequested = true; waveform.flash(); };
+    editButton.setComponentID ("editButton");
+    editButton.setClickingTogglesState (true);
+    editButton.setToggleState (proc.fullView.load(), juce::dontSendNotification);
+    editButton.onClick = [this]
+    {
+        proc.fullView = editButton.getToggleState();
+        applyView();
+    };
+    editButton.setTooltip (juce::String::fromUTF8 ("Все ручки синтезатора: оба генератора, фильтр целиком, огибающие, LFO и все эффекты. "
+                                                   "Нажать ещё раз — снова только главные ручки. Звук от переключения не меняется"));
     advancedButton.setClickingTogglesState (true);
     advancedButton.onClick = [this]
     {
@@ -1019,7 +1037,7 @@ PowerSynthEditor::PowerSynthEditor (PowerSynthProcessor& p)
     analogMode = std::make_unique<ps::ui::Segment> (p.state, ps::id::analog, juce::StringArray { "DIGITAL", "ANALOGUE" }, "DIGITAL: the exact sound. ANALOGUE: slight pitch drift, every note a little different, warmth and a softer top");
     analogMode->setComponentID ("analog");
     addAndMakeVisible (*analogMode);
-    resized();
+    applyView();   // lays the window out
     renderWaveform();
     startTimerHz (30);
 }
@@ -1109,16 +1127,18 @@ void PowerSynthEditor::resized()
     auto header = getLocalBounds().removeFromTop (S (60)).reduced (S (24), S (14));
     menuButton.setBounds (header.removeFromRight (S (40)));
     header.removeFromRight (S (8));
-    advancedButton.setBounds (header.removeFromRight (S (96)));
+    advancedButton.setBounds (header.removeFromRight (S (92)));
     header.removeFromRight (S (8));
-    previewButton.setBounds (header.removeFromRight (S (86)));
+    editButton.setBounds (header.removeFromRight (S (60)));
+    header.removeFromRight (S (8));
+    previewButton.setBounds (header.removeFromRight (S (80)));
     if (analogMode != nullptr) // left, after the logo (the preset name owns the centre)
     {
         auto left = getLocalBounds().removeFromTop (S (60)).reduced (S (24), S (14));
         left.removeFromLeft (S (136));
         analogMode->setBounds (left.removeFromLeft (S (164)));
     }
-    auto centre = getLocalBounds().removeFromTop (S (60)).withSizeKeepingCentre (S (420), S (32));
+    auto centre = getLocalBounds().removeFromTop (S (60)).withSizeKeepingCentre (S (400), S (32));
     prevButton.setBounds (centre.removeFromLeft (S (32)));
     saveButton.setBounds (centre.removeFromRight (S (64)));
     centre.removeFromRight (S (6));
@@ -1141,6 +1161,56 @@ void PowerSynthEditor::resized()
     master.setBounds (output);
     body.removeFromTop (S (14));
 
+    if (proc.fullView.load())
+        layoutFull (body);
+    else
+        layoutMain (body);
+
+    advanced.setBounds (getWidth() - S (24) - S (640), S (64), S (640), S (300));
+    browser.setBounds (getLocalBounds().withTrimmedTop (S (60)).reduced (S (24), S (14)));
+}
+
+// The main view (3.2): the 12 knobs used most, all large, in five blocks. OSC A -> FILTER -> AMP on top (the
+// signal path), LFO and FX below; a lower block is as wide per knob as an upper one.
+void PowerSynthEditor::layoutMain (juce::Rectangle<int> body)
+{
+    const float s = (float) getWidth() / 1080.0f;
+    auto S = [s] (float v) { return juce::roundToInt (v * s); };
+    const int gutter = S (28), rowGap = S (14);
+    const int rowH = (body.getHeight() - rowGap) / 2;
+    auto rowA = body.removeFromTop (rowH);
+    body.removeFromTop (rowGap);
+    auto rowB = body;
+    auto block = [&] (juce::Rectangle<int> area, const char* title, std::initializer_list<Knob*> knobs)
+    {
+        sections.push_back ({ title, area });
+        auto inner = area.reduced (S (14), S (10)).withTrimmedTop (S (24));
+        const int w = inner.getWidth() / (int) knobs.size();
+        for (auto* k : knobs)
+            k->setBounds (inner.removeFromLeft (w));
+    };
+    const int blockW = (rowA.getWidth() - 2 * gutter) / 3;
+    const auto oscArea = rowA.removeFromLeft (blockW);
+    arrows.push_back (rowA.removeFromLeft (gutter).getCentre().toFloat().withY ((float) oscArea.getCentreY()));
+    const auto fltArea = rowA.removeFromLeft (blockW);
+    arrows.push_back (rowA.removeFromLeft (gutter).getCentre().toFloat().withY ((float) fltArea.getCentreY()));
+    block (oscArea, "OSC A", { &oscAShape, &detune });
+    block (fltArea, "FILTER", { &cutoff, &resonance });
+    block (rowA, "AMP", { &attack, &release });
+
+    const int slot = (rowB.getWidth() - gutter) / 6;
+    const auto lfoArea = rowB.removeFromLeft (slot);
+    rowB.removeFromLeft (gutter);
+    block (lfoArea, "LFO", { &lfoAmount });
+    lfoOn.setBounds (lfoArea.reduced (S (12), S (8)).removeFromTop (S (22)).removeFromRight (S (50))); // in the title line
+    block (rowB, "FX", { &drive, &chorus, &delayMix, &reverbMix, &width });
+}
+
+// EDIT: every block, as before 3.2.
+void PowerSynthEditor::layoutFull (juce::Rectangle<int> body)
+{
+    const float s = (float) getWidth() / 1080.0f;
+    auto S = [s] (float v) { return juce::roundToInt (v * s); };
     // Two rows of three blocks along the signal path: SOURCE -> FM -> FILTER, DRIVE -> AMP -> STEREO.
     const int gutter = S (28), rowGap = S (14);
     const int rowH = (body.getHeight() - rowGap) / 2;
@@ -1224,9 +1294,32 @@ void PowerSynthEditor::resized()
     driveType.setBounds (fx.removeFromTop (S (26)));
     fx.removeFromTop (S (8));
     primaryAndGrid (fx, drive, { &chorus, &delayMix, &reverbMix, &width, &smash, &shift, &sidechain }, 4, 30);   // 3.1: room for SIDECHAIN
+}
 
-    advanced.setBounds (getWidth() - S (24) - S (640), S (64), S (640), S (300));
-    browser.setBounds (getLocalBounds().withTrimmedTop (S (60)).reduced (S (24), S (14)));
+std::vector<ps::ui::Knob*> PowerSynthEditor::mainKnobs()
+{
+    return { &oscAShape, &detune, &cutoff, &resonance, &attack, &release, &lfoAmount, &drive, &chorus, &delayMix, &reverbMix, &width };
+}
+
+std::vector<juce::Component*> PowerSynthEditor::panelControls()
+{
+    return { &oscAShape, &unison, &detune, &oscAOct, &oscALevel, &warp, &ring, &oscBLevel, &oscBShape, &oscBOct, &oscBSemi, &fmAmount,
+             &noise, &cutoff, &resonance, &fltEnv, &fltDecay, &grit, &morph, &attack, &decay, &sustain, &release, &glide, &pitchEnv,
+             &pitchTime, &punch, &lfoAmount, &lfoRate, &lfoDiv, &drive, &chorus, &delayMix, &reverbMix, &width, &smash, &shift,
+             &sidechain, &filterMode, &driveType, &voiceMode, &lfoShape, &lfoTarget, &lfoSync, &lfoOn, &warpMode };
+}
+
+void PowerSynthEditor::applyView()
+{
+    const bool full = proc.fullView.load();
+    const auto main = mainKnobs();
+    for (auto* c : panelControls())
+        c->setVisible (full || c == &lfoOn || std::any_of (main.begin(), main.end(), [c] (Knob* k) { return k == c; }));
+    for (auto* k : main)
+        k->setLarge (! full);
+    editButton.setToggleState (full, juce::dontSendNotification);
+    resized();
+    repaint();
 }
 
 void PowerSynthEditor::timerCallback()

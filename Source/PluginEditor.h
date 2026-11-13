@@ -41,6 +41,9 @@ public:
     Knob (juce::AudioProcessorValueTreeState&, const juce::String& paramId, const juce::String& title, const juce::String& tooltip);
     void setPrimary (bool);
     bool isPrimary() const { return (bool) slider.getProperties()["primary"]; }
+    // Large without the accent: the main view (3.2) shows its 12 knobs large, the accent stays one per block.
+    void setLarge (bool);
+    bool isLarge() const { return isPrimary() || (bool) slider.getProperties()["large"]; }
     void resized() override;
     void paint (juce::Graphics&) override;
     juce::Slider slider;
@@ -234,13 +237,20 @@ private:
     void askForName (const juce::String& title, const juce::String& initial, std::function<void (juce::String)> done);
     void showError (const juce::String& message);
     void refreshHeader(); // the preset name and its star
+    // 3.2 (Roman, 2026-11-13: "the interface is too complex and overloaded"): the main view shows the 12 knobs
+    // used most, EDIT shows every block. The choice is saved with the project; a new instance opens the main view.
+    void applyView();
+    std::vector<juce::Component*> panelControls();   // every knob and switch of the blocks (not the header or MASTER)
+    std::vector<ps::ui::Knob*> mainKnobs();
+    void layoutMain (juce::Rectangle<int> body);
+    void layoutFull (juce::Rectangle<int> body);
 
     PowerSynthProcessor& proc;
     ps::ui::LookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 600 };
 
     juce::TextButton prevButton { "<" }, nextButton { ">" }, presetButton, saveButton { "SAVE" }, advancedButton { "ADVANCED" },
-        menuButton { "..." }, previewButton { "PREVIEW" };
+        menuButton { "..." }, previewButton { "PREVIEW" }, editButton { "EDIT" };
     ps::ui::StarButton favouriteButton;
 
     ps::ui::Knob oscAShape, unison, detune, oscAOct, oscALevel, warp, ring;
